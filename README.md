@@ -25,7 +25,10 @@
 
 ```powershell
 python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
+python -m runtime_process_guard.cli preflight --json -- node server.mjs --stdio
 ```
+
+既定出力は人間向けのoperational command contract形式です。自動回収では `--json` を指定します。
 
 終了コード:
 

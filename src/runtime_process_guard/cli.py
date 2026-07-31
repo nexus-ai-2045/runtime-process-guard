@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="runtime-process-guard")
     subparsers = parser.add_subparsers(dest="action", required=True)
     preflight = subparsers.add_parser("preflight")
+    preflight.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     preflight.add_argument("--min-available-memory-mb", type=int, default=2048)
     preflight.add_argument("--max-cpu-percent", type=float, default=90.0)
     preflight.add_argument("command", nargs=argparse.REMAINDER)
@@ -44,7 +45,28 @@ def main(argv: list[str] | None = None) -> int:
         "read_only": True,
         **asdict(result),
     }
-    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    else:
+        next_action = {
+            "allow": "caller-may-launch",
+            "reuse": "reuse-existing-process",
+            "defer": "retry-after-resource-pressure-drops",
+            "deny": "do-not-launch",
+            "unknown": "repair-observation-before-launch",
+        }[result.decision]
+        lines = (
+            "action: preflight",
+            f"target: {result.executable}",
+            "dry_run: true",
+            "changed: false",
+            "verified: true",
+            f"decision: {result.decision}",
+            f"identity: {result.identity_prefix}",
+            f"existing_count: {result.existing_count}",
+            f"next_action: {next_action}",
+        )
+        print("\n".join(lines))
     return EXIT_CODES[result.decision]
 
 
