@@ -56,3 +56,7 @@ python -m pytest -q
 ## Repository visibility
 
 このrepositoryはprivate運用を前提とします。ライセンスはAll rights reservedで、remote作成とpushはローカル実装とは別の承認境界です。
+
+## Next run
+
+Codex MCP起動経路への統合は [`docs/NEXT_RUN.md`](docs/NEXT_RUN.md) の再開契約に従います。最初はshadow modeとし、人間レビュー前にprocess起動をblockしません。
