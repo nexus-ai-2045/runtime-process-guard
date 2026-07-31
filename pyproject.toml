@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runtime-process-guard"
+version = "0.1.0"
+description = "Privacy-first admission control for local subprocesses and MCP servers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["psutil>=6,<8"]
+
+[project.scripts]
+runtime-process-guard = "runtime_process_guard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
