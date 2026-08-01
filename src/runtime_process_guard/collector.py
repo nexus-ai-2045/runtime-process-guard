@@ -11,7 +11,12 @@ from .admission import Observation
 from .privacy import command_identity, safe_executable_name
 
 
-def observe(command: Sequence[str], *, cpu_sample_seconds: float = 0.2) -> Observation:
+def observe(
+    command: Sequence[str],
+    *,
+    cpu_sample_seconds: float = 0.2,
+    reuse_policy: str = "singleton",
+) -> Observation:
     identity = command_identity(command)
     duplicate_pids: list[int] = []
     inaccessible = 0
@@ -48,4 +53,5 @@ def observe(command: Sequence[str], *, cpu_sample_seconds: float = 0.2) -> Obser
         cpu_percent=cpu_percent,
         collection_errors=tuple(errors),
         inaccessible_processes=inaccessible,
+        reuse_policy=reuse_policy,
     )

@@ -26,6 +26,8 @@
 ```powershell
 python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
 python -m runtime_process_guard.cli preflight --json -- node server.mjs --stdio
+python -m runtime_process_guard.cli preflight --reuse-policy dedicated-stdio -- node server.mjs --stdio
+python -m runtime_process_guard.cli shadow-snapshot --owner codex.exe --process-name node.exe --json
 ```
 
 既定出力は人間向けのoperational command contract形式です。自動回収では `--json` を指定します。
@@ -39,6 +41,8 @@ python -m runtime_process_guard.cli preflight --json -- node server.mjs --stdio
 - `40`: `unknown`
 
 `preflight` は対象プロセスを起動しません。呼び出し側は判定結果を確認してから起動してください。
+
+stdio MCPはclientごとに専用pipeを持つため、既存processへ単純にreuseできません。`--reuse-policy dedicated-stdio` は同一identityを観測してもreuseせず、resource pressureだけで `allow` / `defer` を判断します。
 
 ## 開発
 

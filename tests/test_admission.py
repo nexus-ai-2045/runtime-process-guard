@@ -9,6 +9,7 @@ def observation(**overrides: object) -> Observation:
         "available_memory_mb": 8192,
         "cpu_percent": 10.0,
         "collection_errors": (),
+        "reuse_policy": "singleton",
     }
     values.update(overrides)
     return Observation(**values)
@@ -23,6 +24,14 @@ def test_reuse_when_singleton_already_exists() -> None:
     result = evaluate(observation(duplicate_pids=(123,)), Budget())
     assert result.decision == "reuse"
     assert result.existing_count == 1
+
+
+def test_dedicated_stdio_does_not_reuse_existing_process() -> None:
+    result = evaluate(
+        observation(duplicate_pids=(123,), reuse_policy="dedicated-stdio"), Budget()
+    )
+    assert result.decision == "allow"
+    assert "same-identity-dedicated-stdio" in result.reason_codes
 
 
 def test_defer_when_memory_is_low() -> None:

@@ -2,7 +2,7 @@
 
 ## 状態
 
-- status: committed-next
+- status: awaiting-human-review
 - owner: codex（このタスクの再開先）
 - recorded_at: 2026-08-01T02:12:30+09:00
 - scope: Codex配下のMCP起動経路を1経路だけ選び、`runtime-process-guard preflight` を接続する
@@ -14,11 +14,11 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 
 ## 実装順
 
-1. `runtime_process_doctor.py` と `node_process_tree.py` で再起動後baselineを取得する。
-2. Codex MCP起動経路のうち、同一identityが増殖する1経路を一次証拠で特定する。
-3. 起動前preflightをshadow modeで接続する。shadowでは起動を止めない。
-4. false positive、identity衝突、観測不能率をテスト・実測する。
-5. block modeへの昇格案を人間レビューへ返す。承認前にblockを有効化しない。
+1. [完了] `runtime_process_doctor.py` と `node_process_tree.py` で再起動後baselineを取得する。
+2. [完了] Codex MCP起動経路の同一identity世代増殖を一次証拠で特定する。
+3. [完了] 起動を止めない匿名 `shadow-snapshot` を実装する。
+4. [完了] stdio MCPを単純reuseしないtransport-aware policyをテストする。
+5. [待機] `HUMAN_REVIEW.md` のパイロットを人間レビューする。
 
 ## evidence_path
 

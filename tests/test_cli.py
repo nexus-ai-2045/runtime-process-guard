@@ -8,7 +8,7 @@ def test_cli_emits_redacted_machine_readable_result(monkeypatch, capsys) -> None
     monkeypatch.setattr(
         cli,
         "observe",
-        lambda command: Observation(
+        lambda command, **kwargs: Observation(
             identity="b" * 64,
             executable="node.exe",
             duplicate_pids=(),
@@ -34,7 +34,7 @@ def test_cli_human_output_follows_operational_contract(monkeypatch, capsys) -> N
     monkeypatch.setattr(
         cli,
         "observe",
-        lambda command: Observation(
+        lambda command, **kwargs: Observation(
             identity="c" * 64,
             executable="python.exe",
             duplicate_pids=(),
