@@ -6,8 +6,8 @@
 - recorded_at: `2026-08-02T00:00:22+09:00`
 - recorded_by: `codex`
 - owner: `codex`
-- source: `C:/Users/yas/Projects/Documents/.repos/runtime-process-guard`
-- target: `C:/Users/yas/Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
+- source: `C:/Users/<user>/Projects/Documents/.repos/runtime-process-guard`
+- target: `C:/Users/<user>/Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
 - external_boundary: remote作成、push、公開、visibility変更、元履歴削除は未実行
 
 ## 実行済み
@@ -34,8 +34,8 @@
 ```json
 {
   "name": "runtime-process-guard",
-  "source": "C:/Users/yas/Projects/Documents/.repos/runtime-process-guard",
-  "target": "C:/Users/yas/Projects/Documents/.repos/nexus_ai/private/runtime-process-guard",
+  "source": "C:/Users/<user>/Projects/Documents/.repos/runtime-process-guard",
+  "target": "C:/Users/<user>/Projects/Documents/.repos/nexus_ai/private/runtime-process-guard",
   "repo_class": "own_private",
   "migration_state": "moved_verified_pending_codex_project_reregistration",
   "dirty_paths": 0,
@@ -61,7 +61,7 @@
 
 保存済みproject/workspaceの参照先を、次へ変更してよいか。
 
-`C:/Users/yas/Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
+`C:/Users/<user>/Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
 
 推奨: 再登録する。旧source pathは既に存在しない。
 
