@@ -32,7 +32,10 @@ def group_generations(
     ordered = sorted(rows, key=lambda row: row.created_at_epoch)
     cohorts: list[list[ProcessIdentityRow]] = []
     for row in ordered:
-        if not cohorts or row.created_at_epoch - cohorts[-1][0].created_at_epoch > window_seconds:
+        if (
+            not cohorts
+            or row.created_at_epoch - cohorts[-1][0].created_at_epoch > window_seconds
+        ):
             cohorts.append([row])
         else:
             cohorts[-1].append(row)
@@ -53,7 +56,7 @@ def group_generations(
     return result
 
 
-def _has_owner(process: psutil.Process, owner_name: str) -> bool:
+def _has_owner(process: psutil.Process, owner_name: str) -> bool | None:
     expected = owner_name.lower()
     current = process
     for _ in range(12):
@@ -64,7 +67,7 @@ def _has_owner(process: psutil.Process, owner_name: str) -> bool:
             if current.name().lower() == expected:
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            return False
+            return None
     return False
 
 
@@ -75,10 +78,19 @@ def collect_shadow_snapshot(
     inaccessible = 0
     for process in psutil.process_iter(["name", "cmdline", "create_time"]):
         try:
-            if process_name and (process.info.get("name") or "").lower() != process_name.lower():
+            if (
+                process_name
+                and (process.info.get("name") or "").lower() != process_name.lower()
+            ):
                 continue
             cmdline = process.info.get("cmdline") or []
-            if not cmdline or not _has_owner(process, owner_name):
+            if not cmdline:
+                continue
+            ownership = _has_owner(process, owner_name)
+            if ownership is None:
+                inaccessible += 1
+                continue
+            if not ownership:
                 continue
             rows.append(
                 ProcessIdentityRow(

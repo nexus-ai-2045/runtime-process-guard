@@ -18,7 +18,8 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 2. [完了] Codex MCP起動経路の同一identity世代増殖を一次証拠で特定する。
 3. [完了] 起動を止めない匿名 `shadow-snapshot` を実装する。
 4. [完了] stdio MCPを単純reuseしないtransport-aware policyをテストする。
-5. [待機] `HUMAN_REVIEW.md` のパイロットを人間レビューする。
+5. [完了] `feedback-cycle` で前回比較、trend判定、next action、state保存を1コマンドへ接続する。
+6. [待機] `HUMAN_REVIEW.md` のパイロットを人間レビューする。
 
 ## evidence_path
 
@@ -26,6 +27,7 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 - `reports/codex-mcp-shadow.jsonl`
 - `reports/codex-mcp-shadow-summary.json`
 - repository test suite
+- `reports/runtime-feedback-state.json`
 
 レポートにはraw command line、環境変数、secret、ユーザー名、home絶対パスを保存しない。
 
@@ -47,4 +49,4 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 
 ## next_action
 
-再起動後baselineを取得し、shadow integrationの対象1経路と変更ファイルを提示してから実装する。
+`feedback-cycle` を再実行してtrendを更新する。`human-review-runtime-pressure` の場合だけ、保存stateとlineage差分を人間レビューへ渡す。block／killへの昇格は別承認とする。
