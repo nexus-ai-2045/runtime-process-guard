@@ -45,3 +45,10 @@
 ## archive判定
 
 本repoへの回収、private PR作成、各タスクへの移譲通知、Codex APIでの状態再確認が揃ったタスクだけをarchiveする。ユーザー操作待ちや未移譲の固有残務があるタスクは保持する。
+
+## 2026-08-10 厳格再監査
+
+- 関連18タスクの内訳は、今回archive 15、以前からarchive 2、音声UI固有残務のためactive保持 1である。
+- runtimeテーマの成果・TODOは本タスクへ回収し、音声タスクの`Ctrl+M`設定は元の音声タスクへ残した。
+- 今回archiveした15件は統合元タスク自身の自己closeoutではなく、統合管制からCodex APIを呼んだ中央archiveである。したがって「各タスク自身が残務ゼロを確認して自己archive」の証拠は未取得であり、厳格条件5/7はhistorical exceptionとする。
+- archive済みタスクを通知目的でunarchiveしない。今後は [`THREAD_CONSOLIDATION_PROTOCOL.md`](THREAD_CONSOLIDATION_PROTOCOL.md) の自己closeout receiptをarchive前の必須条件にする。
