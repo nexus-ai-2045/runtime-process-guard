@@ -46,13 +46,27 @@ stdio MCPを `npx` で起動する定義だけを `conhost.exe --headless` で�
 plugin cache には触れません。不正JSONを1件でも検出した場合は、`--apply` でも何も変更せず
 終了コード `40` で停止します (fail-closed)。
 
-`--apply` は上書きの直前に原本を同じディレクトリへ `<name>.pre-headless.bak` として退避します。
-plugin cache は git 管理外で他に rollback 手段が無いためです。原本は raw command line を含むので
-report や state へは持ち出さず、既にその値がある場所に留めます。既存の `.bak` は最初の原本なので
-上書きしません。退避を省略する場合は `--no-backup` を指定します。
+異常時に成功を報告しないことを優先します。次はいずれも `ok` を返しません。
 
-receipt に載るのは件数だけです (`scanned` / `changed` / `pending` / `already_compliant` /
-`invalid_count` / `mode`)。plugin の path、server 名、command line は保存しません。
+- cache 配下を降りられない (権限、cache が存在しない、ディレクトリでない) → `walk:` を invalid に数え `unknown`
+- `npx` 起動なのに `args` の形が想定外で包めない → `unsupported:` を invalid に数え `unknown`。準拠済みには数えません
+- 複数 manifest の書き込み途中で失敗 → 書いた分をメモリ上の原本へ戻し `aborted=write-error` で `unknown`
+- 読み取りから書き込みまでの間に第三者が manifest を変更 → 上書きせず `aborted=conflict` で defer (exit 20)
+- 巻き戻し自体に失敗 → `aborted=rollback-incomplete` / `next_action=restore-plugin-cache-manually`
+
+symlink に加えて Windows の junction / reparse point も降下対象から除外します
+(`Path.is_symlink()` では junction を検出できず、`followlinks=False` も止めないため)。
+
+**原本の durable な複製は既定で作りません。** 原本は raw command line や `env` を含み、
+複製を残すと plugin 側がその値を消した後も残り続けるためです。apply 中の巻き戻しは
+メモリへ保持した原本で行います。人手の巻き戻し用に控えが必要な場合だけ `--backup` を
+明示すると `<name>.pre-headless.bak` を同じディレクトリへ置きます (既存の `.bak` は壊しません)。
+
+包む先の `cmd.exe` に絶対パスを埋めません。`SystemRoot` が `C:\Windows` でない環境で
+壊れないことと、privacy boundary の「ユーザー名を含む絶対パスを保存しない」を同時に満たします。
+
+receipt に載るのは件数と状態だけです (`scanned` / `changed` / `pending` / `already_compliant` /
+`invalid_count` / `mode` / `aborted`)。plugin の path、server 名、command line は保存しません。
 
 `pythonw.exe` の Scheduled Task から `--apply` 付きで実行すれば、plugin更新による設定戻りを
 窓なしで再調停できます。Scheduled Task の登録は `AGENTS.md` の停止線どおり明示承認を要します。
