@@ -172,16 +172,84 @@ protocol 手順 5 に従い管制へ戻す。
 5. **security**: Candidate6 チャットで `colab.log` grep 時に OAuth Bearer トークンが平文出力された
    自己申告あり。テーマ外だが引継ぎ先が不明。ローテーション要否の判断が必要。
 
+## 2026-08-12 同日追補
+
+本書を起票した後、同日中に確定した事項。前例（[`task-consolidation-2026-08-10.md`](task-consolidation-2026-08-10.md)
+の「厳格再監査」節）に倣い、追記はここで閉じる。以降の差分は次の日付の記録へ移す。
+
+### C0 現状測定（read-only / 承認不要で実施）
+
+30 件の残務の多くが「重い → 測る → 提案 → 承認待ちで停止」の途中で止まっていたが、
+**症状の現在値が未測定**だった。`runtime_process_watch.py --dry-run` は `[quiet]`
+（total=445 / threshold=1143 / 空き 14.4GB）。契約どおり doctor へは上げず、psutil で対象名のみ集計した。
+
+| 指標 | 悪化時（記録） | 良好時（記録） | 2026-08-12 |
+|---|---|---|---|
+| claude.exe | 52 本 / 9,487MB | 26 本 / 4.0GB | 30 本 / 6,895MB |
+| conhost.exe | 220 | 63 | 67 |
+| node.exe | 159 | 39 | 33 |
+| pdf-mcp-server | — | 0 | 0 |
+| codex.exe / chatgpt.exe | — | — | 0 / 0（未起動） |
+
+→ **F3 の再悪化は解消**。memory `mcp-plugin-process-leak.md` の SSOT drift も「再悪化は一時的だった」で確定。
+→ **F8 の個別 kill 承認待ちは対象消滅**。TextInputHost / 孤児 `find.exe` PID 18552 / MCP 重複 8 本 /
+sdk-child 13 本 / telemetry watchdog 18 本は、いずれも現在のプロセス表に存在しない。
+→ 系統 A（Codex 配下のリーク）は Codex 未起動のため現時点の寄与ゼロ。
+
+### D5（追跡漏れ）を閉鎖 — 漏れは 2 本ではなく 4 本だった
+
+[lm93TRQN5WSL/Projects PR #546](https://github.com/lm93TRQN5WSL/Projects/pull/546)。
+`origin/main` に不在であることを 1 件ずつ実測確認した。
+
+| ファイル | 役割 |
+|---|---|
+| `runtime_process_watch.py` | **2 段 watcher の入口そのもの** |
+| `runtime_process_watch_contract_check.py` | 上記の契約チェッカー |
+| `codex_mcp_duplicate_guard.py` | 重複 MCP の回収器 |
+| `windows_terminal_flash_guard.py` | 黒窓検知 |
+
+4 本すべて `ssot-registry.yaml` へ登録（gate に正しく止められたため）。
+`shared/scripts/tests/` は既に allowlist 済みで、対応する test 2 本は単に untracked だっただけ。
+
+### contract check の C3 が到達不能化していた（発見・修正）
+
+- **root cause**: `total_threshold()` は `max(baseline中央値 x factor, floor)` を返す。
+  つまり `--total-floor` は閾値を**上げることしかできない**
+- C3 は「floor を下げれば trip する」と仮定していたが、成り立つのは history 3 件未満で floor が採用される間だけ
+- ログが 267 件（中央値 915 → 閾値 1143）まで溜まった時点で構造的に発火不能化。
+  **コード変更なしにデータ蓄積だけで壊れる型**
+- C2（quiet を強制）が通り続けたのは「floor を上げる」方向だから。この非対称性が見落とされていた
+- 2026-08-05 のセッション記録は「契約テスト全項目 PASS」。当時はログが新品だった
+- 修正後 `RESULT: ALL PASS`（C1 / C1b / C2 / C3 / C3b / C4）
+
+### A1（PR #2）の改訂と junction の実測
+
+Codex レビューで P1 x6 / P2 x2。反論する項目はなく、**fail-open だった 5 経路**を fail-closed へ寄せた
+（走査エラー無視 / 変換不能な npx を準拠扱い / 部分適用 / 読み書き間の競合 / junction 未検出）。
+併せて既定の backup を廃止（原本の durable な複製が raw command line と env を残すため）、
+包む先の `cmd.exe` から絶対パスを削除。test 45 → 52 passed、CI 4 leg 全 SUCCESS。
+
+**junction は実機で現に起きていた**。`cache/openai-bundled/chrome/latest` は Junction で
+同一 cache 内の `26.803.81509` を指し、実体の `plugin.json` は 1 つ。旧コードは同じ物理ファイルを
+`latest/` 経由と実体経由で **2 回処理**していた（`scanned` 230 → 229 はこの二重計上の解消で、取りこぼしではない）。
+今回は junction 先が cache 内だったため外部への書き込みは起きていないが、外を指す junction なら
+cache 外のファイルを書き換えていた。
+
+なお当初の「失敗時に自動 rollback する」案は後続 commit `326b01a` / `0f4a984` で撤回した。
+filesystem API に compare-and-swap が無いため、**読み取り確認後の rollback がその直後に入った
+第三者更新を上書きし得る**。修正しようとした競合と同型の欠陥を rollback 経路に持ち込んでいた。
+現在は適用済み manifest を保持し、partial-write として人間確認へ上げる。
+
 ## 自己closeout receipt
 
 ```json
 {
   "thread_id": "local_bd2be0d2-52c5-4740-9d76-810e3fdbbac9",
   "theme": "runtime-process-guard (Claude Code side)",
-  "theme_residual": 30,
+  "theme_residual": 25,
   "unrelated_residual": 0,
-  "human_wait": 14,
-  "external_wait": 2,
+  "human_wait": 12,
+  "external_wait": 3,
   "unknown": 5,
   "handoff_receipts": [
     "local_c9432334-e561-45d8-b428-9e9cd85e6878",
@@ -192,5 +260,9 @@ protocol 手順 5 に従い管制へ戻す。
   "archive_result": "not-archived"
 }
 ```
+
+数え方の訂正: `theme_residual` の母数は B〜G の 28 件。起票時の 30 は、既に閉じた A1 / A2 を
+含めた数え違いだった。同日追補で D5 / F3 / F8 を閉じたので 25。
+`external_wait` は merge 判断待ちの 3 PR（本 repo #2 / #3、Projects #546）。
 
 `theme_residual` が 0 でないため archive しない。protocol 手順 8 に従い 1〜7 を繰り返す。
