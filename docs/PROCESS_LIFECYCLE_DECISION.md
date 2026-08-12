@@ -121,7 +121,10 @@ MicrosoftのJob Objectsは、複数プロセスを一単位として制限・計
 ## 実装順序
 
 1. [完了] 5分自動回収を廃止し、`feedback-cycle` でread-only shadow、前回比較、trend、next action、state保存を接続する。
-2. lease registryのschemaとstale判定をpure functionで実装する。
+2. [ローカル実装済み / runtime未接続] lease registryのschemaとstale判定をpure functionで実装する。
+   `runtime_process_guard.lease` は匿名identity、owner PIDと生成時刻、heartbeat、期限を保持し、
+   owner不明・期限切れだがowner生存中のleaseを回収不可としてfail-closedに分類する。
+   実processの観測、永続registry、launcherへの接続は次段階に分離する。
 3. Windows Job Object adapterを、テスト用のguarded launcher配下だけで実装する。
 4. graceful shutdown、timeout、Job close、postflightを統合テストする。
 5. 1種類のMCPでshadowから限定pilotへ進める。
