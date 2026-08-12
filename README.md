@@ -9,6 +9,7 @@
 - Codex配下processの世代幅、前回差分、親子lineageを匿名集計
 - `allow` / `reuse` / `defer` / `deny` / `unknown` を機械可読JSONで返す
 - Windows、macOS、Linuxで同じ判定語彙を使用
+- Windows plugin更新後に、MCPの`npx`起動を`conhost.exe --headless`へ冪等調停
 - プロセス停止、設定変更、外部送信、telemetry は行わない
 
 ## privacy boundary
@@ -33,7 +34,28 @@ python -m runtime_process_guard.cli shadow-snapshot --owner codex.exe --process-
 python -m runtime_process_guard.cli feedback-cycle --owner codex.exe --process-name node.exe --state-path reports/runtime-feedback-state.json --json
 python -m runtime_process_guard.cli lineage-snapshot --owner codex.exe --recent-minutes 10 --report-path reports/codex-lineage.json --mermaid-path reports/codex-lineage.md
 python -m runtime_process_guard.cli lineage-snapshot --owner codex.exe --previous-report reports/codex-lineage.json --report-path reports/codex-lineage-next.json --mermaid-path reports/codex-lineage-next.md
+python scripts/reconcile_codex_plugin_windows.py --receipt reports/plugin-window-policy-latest.json
+python scripts/reconcile_codex_plugin_windows.py --receipt reports/plugin-window-policy-latest.json --apply
 ```
+
+`reconcile_codex_plugin_windows.py` は plugin cache の `plugin.json` / `.mcp.json` のうち、
+stdio MCPを `npx` で起動する定義だけを `conhost.exe --headless` で包みます。変換は冪等です。
+
+**既定は read-only の check です。** 書き換えるには `--apply` を明示します。check では
+書き換えが必要な件数を `pending` として報告し、終了コード `20` (defer) を返すだけで
+plugin cache には触れません。不正JSONを1件でも検出した場合は、`--apply` でも何も変更せず
+終了コード `40` で停止します (fail-closed)。
+
+`--apply` は上書きの直前に原本を同じディレクトリへ `<name>.pre-headless.bak` として退避します。
+plugin cache は git 管理外で他に rollback 手段が無いためです。原本は raw command line を含むので
+report や state へは持ち出さず、既にその値がある場所に留めます。既存の `.bak` は最初の原本なので
+上書きしません。退避を省略する場合は `--no-backup` を指定します。
+
+receipt に載るのは件数だけです (`scanned` / `changed` / `pending` / `already_compliant` /
+`invalid_count` / `mode`)。plugin の path、server 名、command line は保存しません。
+
+`pythonw.exe` の Scheduled Task から `--apply` 付きで実行すれば、plugin更新による設定戻りを
+窓なしで再調停できます。Scheduled Task の登録は `AGENTS.md` の停止線どおり明示承認を要します。
 
 既定出力は人間向けのoperational command contract形式です。自動回収では `--json` を指定します。
 
