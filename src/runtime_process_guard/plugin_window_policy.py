@@ -221,8 +221,13 @@ def _apply_pending(
     pending_names: tuple[str, ...],
     backup: bool,
 ) -> ReconcileResult:
-    """書き込み。途中で失敗したら書いた分を原本へ戻してから報告する。"""
-    written: list[tuple[Path, bytes, bytes]] = []
+    """書き込み。途中失敗は自動rollbackせず partial-write として止める。
+
+    通常の filesystem API には「内容が期待値なら置換する」という compare-and-swap が
+    ない。読取り確認後の自動rollbackは、その直後に入った第三者更新を上書きし得る。
+    そのため適用済みmanifestは保持し、件数だけを返して人間確認へ上げる。
+    """
+    written = 0
     aborted: str | None = None
     for path, payload, original in pending:
         try:
@@ -230,9 +235,6 @@ def _apply_pending(
                 raise _Conflict(str(path))
             if backup:
                 _keep_backup(path)
-            applied = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
-                "utf-8"
-            )
             _write_json_atomic(path, payload)
         except _Conflict:
             aborted = "conflict"
@@ -240,25 +242,21 @@ def _apply_pending(
         except OSError:
             aborted = "write-error"
             break
-        written.append((path, original, applied))
+        written += 1
     if aborted is None:
         return ReconcileResult(
             scanned, len(pending), compliant, (), pending_names, True
         )
-    for path, original, applied in reversed(written):
-        try:
-            if path.read_bytes() != applied:
-                aborted = "rollback-incomplete"
-                continue
-            _write_bytes_atomic(path, original)
-        except OSError:
-            aborted = "rollback-incomplete"
+    if written:
+        aborted = "partial-write"
     return ReconcileResult(
-        scanned, 0, compliant, (), pending_names, False, aborted
+        scanned, written, compliant, (), pending_names, False, aborted
     )
 
 
 def _next_action(result: ReconcileResult) -> str:
+    if result.aborted == "partial-write":
+        return "inspect-partial-plugin-cache-manually"
     if result.aborted == "rollback-incomplete":
         return "restore-plugin-cache-manually"
     if result.aborted:
@@ -271,7 +269,11 @@ def _next_action(result: ReconcileResult) -> str:
 
 
 def _overall(result: ReconcileResult) -> str:
-    if result.invalid or result.aborted in {"write-error", "rollback-incomplete"}:
+    if result.invalid or result.aborted in {
+        "write-error",
+        "rollback-incomplete",
+        "partial-write",
+    }:
         return "unknown"
     return "ok"
 
@@ -314,7 +316,11 @@ def write_receipt(path: Path, payload: dict[str, object]) -> None:
 
 
 def _exit_code(result: ReconcileResult) -> int:
-    if result.invalid or result.aborted in {"write-error", "rollback-incomplete"}:
+    if result.invalid or result.aborted in {
+        "write-error",
+        "rollback-incomplete",
+        "partial-write",
+    }:
         return EXIT_UNKNOWN
     if result.aborted == "conflict":
         return EXIT_DEFER

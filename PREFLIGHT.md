@@ -26,4 +26,4 @@ Scheduled Task再登録、公開承認を意味しない。`unknown`と人間レ
 ## rollback
 
 plugin cacheへのapplyは別承認とし、異常時はreceiptの `aborted` / `next_action` に従う。
-`rollback-incomplete` では第三者更新を上書きせず、対象manifestを人間が確認する。
+`partial-write` では自動rollbackせず、適用済み件数と対象manifestを人間が確認する。

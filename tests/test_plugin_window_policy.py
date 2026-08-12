@@ -209,13 +209,12 @@ def test_reconcile_apply_does_not_clobber_existing_backup(tmp_path) -> None:
     assert backup.read_text(encoding="utf-8") == "first-original"
 
 
-def test_reconcile_rolls_back_earlier_writes_when_a_later_write_fails(
+def test_reconcile_reports_partial_write_when_a_later_write_fails(
     tmp_path, monkeypatch
 ) -> None:
     cache = tmp_path / "plugins" / "cache"
     first = _npx_manifest(cache, "a")
     second = _npx_manifest(cache, "b")
-    originals = {p: p.read_text(encoding="utf-8") for p in (first, second)}
     calls: list[Path] = []
     real_write = policy._write_json_atomic
 
@@ -228,20 +227,24 @@ def test_reconcile_rolls_back_earlier_writes_when_a_later_write_fails(
     monkeypatch.setattr(policy, "_write_json_atomic", flaky)
     result = reconcile_plugin_cache(tmp_path, apply=True)
 
-    assert result.aborted == "write-error"
+    assert result.aborted == "partial-write"
     assert result.applied is False
-    assert result.changed == 0
-    for path, text in originals.items():
-        assert path.read_text(encoding="utf-8") == text
+    assert result.changed == 1
+    assert json.loads(first.read_text(encoding="utf-8"))["tool"]["command"] == (
+        "conhost.exe"
+    )
+    assert json.loads(second.read_text(encoding="utf-8"))["tool"]["command"] == (
+        "npx.cmd"
+    )
     receipt = build_receipt(result, mode="apply")
     assert receipt["overall"] == "unknown"
-    assert receipt["next_action"] == "retry-headless-policy"
+    assert receipt["next_action"] == "inspect-partial-plugin-cache-manually"
 
 
-def test_reconcile_does_not_overwrite_external_change_during_rollback(
+def test_reconcile_does_not_overwrite_external_change_after_partial_write(
     tmp_path, monkeypatch
 ) -> None:
-    """巻き戻し対象が第三者に更新済みなら、その更新を上書きしない。"""
+    """途中失敗後に自動rollbackせず、第三者更新をそのまま保持する。"""
     cache = tmp_path / "plugins" / "cache"
     first = _npx_manifest(cache, "a")
     _npx_manifest(cache, "b")
@@ -259,11 +262,12 @@ def test_reconcile_does_not_overwrite_external_change_during_rollback(
     monkeypatch.setattr(policy, "_write_json_atomic", racing_failure)
     result = reconcile_plugin_cache(tmp_path, apply=True)
 
-    assert result.aborted == "rollback-incomplete"
+    assert result.aborted == "partial-write"
+    assert result.changed == 1
     assert first.read_bytes() == external
     receipt = build_receipt(result, mode="apply")
     assert receipt["overall"] == "unknown"
-    assert receipt["next_action"] == "restore-plugin-cache-manually"
+    assert receipt["next_action"] == "inspect-partial-plugin-cache-manually"
 
 
 def test_reconcile_defers_when_a_manifest_changes_after_the_scan(
@@ -273,7 +277,6 @@ def test_reconcile_defers_when_a_manifest_changes_after_the_scan(
     cache = tmp_path / "plugins" / "cache"
     first = _npx_manifest(cache, "a")
     second = _npx_manifest(cache, "b")
-    first_original = first.read_text(encoding="utf-8")
     real_write = policy._write_json_atomic
     intruded: list[bool] = []
 
@@ -286,12 +289,15 @@ def test_reconcile_defers_when_a_manifest_changes_after_the_scan(
     monkeypatch.setattr(policy, "_write_json_atomic", racing)
     result = reconcile_plugin_cache(tmp_path, apply=True)
 
-    assert result.aborted == "conflict"
-    assert first.read_text(encoding="utf-8") == first_original
+    assert result.aborted == "partial-write"
+    assert result.changed == 1
+    assert json.loads(first.read_text(encoding="utf-8"))["tool"]["command"] == (
+        "conhost.exe"
+    )
     assert json.loads(second.read_text(encoding="utf-8"))["tool"]["command"] == "node"
     receipt = build_receipt(result, mode="apply")
-    assert receipt["overall"] == "ok"
-    assert receipt["next_action"] == "retry-headless-policy"
+    assert receipt["overall"] == "unknown"
+    assert receipt["next_action"] == "inspect-partial-plugin-cache-manually"
 
 
 def test_build_receipt_keeps_v1_keys(tmp_path) -> None:
