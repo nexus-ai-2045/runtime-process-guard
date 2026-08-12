@@ -85,6 +85,21 @@ def test_reconcile_supports_dot_mcp_json(tmp_path) -> None:
     assert payload["tool"]["command"] == "conhost.exe"
 
 
+def test_reconcile_does_not_treat_plugin_metadata_as_direct_mcp_config(
+    tmp_path,
+) -> None:
+    """plugin.json は mcpServers 配下だけを対象にし、metadata を誤変換しない。"""
+    manifest = tmp_path / "plugins" / "cache" / "vendor" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    original = {"launcher": {"command": "npx", "args": ["build-plugin"]}}
+    manifest.write_text(json.dumps(original), encoding="utf-8")
+
+    result = reconcile_plugin_cache(tmp_path, apply=True)
+
+    assert result.changed == 0
+    assert json.loads(manifest.read_text(encoding="utf-8")) == original
+
+
 def test_reconcile_fails_closed_before_any_write(tmp_path) -> None:
     cache = tmp_path / "plugins" / "cache"
     valid = cache / "a" / "plugin.json"
@@ -221,6 +236,34 @@ def test_reconcile_rolls_back_earlier_writes_when_a_later_write_fails(
     receipt = build_receipt(result, mode="apply")
     assert receipt["overall"] == "unknown"
     assert receipt["next_action"] == "retry-headless-policy"
+
+
+def test_reconcile_does_not_overwrite_external_change_during_rollback(
+    tmp_path, monkeypatch
+) -> None:
+    """巻き戻し対象が第三者に更新済みなら、その更新を上書きしない。"""
+    cache = tmp_path / "plugins" / "cache"
+    first = _npx_manifest(cache, "a")
+    _npx_manifest(cache, "b")
+    external = b'{"tool": {"command": "node", "args": ["new"]}}\n'
+    calls: list[Path] = []
+    real_write = policy._write_json_atomic
+
+    def racing_failure(path: Path, payload: object) -> None:
+        calls.append(path)
+        if len(calls) == 2:
+            first.write_bytes(external)
+            raise OSError("disk full")
+        real_write(path, payload)
+
+    monkeypatch.setattr(policy, "_write_json_atomic", racing_failure)
+    result = reconcile_plugin_cache(tmp_path, apply=True)
+
+    assert result.aborted == "rollback-incomplete"
+    assert first.read_bytes() == external
+    receipt = build_receipt(result, mode="apply")
+    assert receipt["overall"] == "unknown"
+    assert receipt["next_action"] == "restore-plugin-cache-manually"
 
 
 def test_reconcile_defers_when_a_manifest_changes_after_the_scan(

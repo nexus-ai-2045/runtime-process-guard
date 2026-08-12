@@ -71,7 +71,9 @@ def _headless_server(server: dict[str, Any]) -> tuple[dict[str, Any], str]:
     return updated, CHANGED
 
 
-def enforce_headless_policy(payload: Any) -> tuple[Any, int, int]:
+def enforce_headless_policy(
+    payload: Any, *, allow_direct: bool = True
+) -> tuple[Any, int, int]:
     """既知の plugin.json / .mcp.json 構造を副作用なしで変換する。
 
     返り値は (更新後 payload, 変換した数, 変換不能だった数)。
@@ -79,6 +81,8 @@ def enforce_headless_policy(payload: Any) -> tuple[Any, int, int]:
     if not isinstance(payload, dict):
         return payload, 0, 0
     servers = payload.get("mcpServers")
+    if not isinstance(servers, dict) and not allow_direct:
+        return payload, 0, 0
     target = servers if isinstance(servers, dict) else payload
     transformed = dict(target)
     changed = 0
@@ -114,13 +118,19 @@ def _is_link_like(path: Path) -> bool:
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
+    serialized = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    _write_bytes_atomic(path, serialized)
+
+
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", newline="\n", dir=path.parent, delete=False
+            "wb", dir=path.parent, delete=False
         ) as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+            handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
             temporary = Path(handle.name)
@@ -181,7 +191,9 @@ def reconcile_plugin_cache(
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             invalid.append(str(path.relative_to(cache)))
             continue
-        updated, changed, unsupported = enforce_headless_policy(payload)
+        updated, changed, unsupported = enforce_headless_policy(
+            payload, allow_direct=path.name == ".mcp.json"
+        )
         if unsupported:
             # npx 起動なのに包めない定義。準拠済みに数えず fail-closed。
             invalid.append(f"unsupported:{path.relative_to(cache)}")
@@ -210,7 +222,7 @@ def _apply_pending(
     backup: bool,
 ) -> ReconcileResult:
     """書き込み。途中で失敗したら書いた分を原本へ戻してから報告する。"""
-    written: list[tuple[Path, bytes]] = []
+    written: list[tuple[Path, bytes, bytes]] = []
     aborted: str | None = None
     for path, payload, original in pending:
         try:
@@ -218,6 +230,9 @@ def _apply_pending(
                 raise _Conflict(str(path))
             if backup:
                 _keep_backup(path)
+            applied = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
+                "utf-8"
+            )
             _write_json_atomic(path, payload)
         except _Conflict:
             aborted = "conflict"
@@ -225,14 +240,17 @@ def _apply_pending(
         except OSError:
             aborted = "write-error"
             break
-        written.append((path, original))
+        written.append((path, original, applied))
     if aborted is None:
         return ReconcileResult(
             scanned, len(pending), compliant, (), pending_names, True
         )
-    for path, original in reversed(written):
+    for path, original, applied in reversed(written):
         try:
-            path.write_bytes(original)
+            if path.read_bytes() != applied:
+                aborted = "rollback-incomplete"
+                continue
+            _write_bytes_atomic(path, original)
         except OSError:
             aborted = "rollback-incomplete"
     return ReconcileResult(

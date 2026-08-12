@@ -40,6 +40,8 @@ python scripts/reconcile_codex_plugin_windows.py --receipt reports/plugin-window
 
 `reconcile_codex_plugin_windows.py` は plugin cache の `plugin.json` / `.mcp.json` のうち、
 stdio MCPを `npx` で起動する定義だけを `conhost.exe --headless` で包みます。変換は冪等です。
+`plugin.json` は `mcpServers` 配下だけ、`.mcp.json` はトップレベルのserver定義だけを対象にし、
+plugin metadataをMCP設定と誤認しません。
 
 **既定は read-only の check です。** 書き換えるには `--apply` を明示します。check では
 書き換えが必要な件数を `pending` として報告し、終了コード `20` (defer) を返すだけで
@@ -53,6 +55,7 @@ plugin cache には触れません。不正JSONを1件でも検出した場合�
 - 複数 manifest の書き込み途中で失敗 → 書いた分をメモリ上の原本へ戻し `aborted=write-error` で `unknown`
 - 読み取りから書き込みまでの間に第三者が manifest を変更 → 上書きせず `aborted=conflict` で defer (exit 20)
 - 巻き戻し自体に失敗 → `aborted=rollback-incomplete` / `next_action=restore-plugin-cache-manually`
+- 巻き戻し前に第三者更新を検出 → その更新を上書きせず、同じく `rollback-incomplete` / `unknown`
 
 symlink に加えて Windows の junction / reparse point も降下対象から除外します
 (`Path.is_symlink()` では junction を検出できず、`followlinks=False` も止めないため)。
