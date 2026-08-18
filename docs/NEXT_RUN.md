@@ -2,11 +2,30 @@
 
 ## 状態
 
-- status: awaiting-human-review
+- status: absorbed-awaiting-implementation
 - owner: codex（このタスクの再開先）
-- recorded_at: 2026-08-01T02:12:30+09:00
-- scope: Codex配下のMCP起動経路を1経路だけ選び、`runtime-process-guard preflight` を接続する
+- recorded_at: 2026-08-19T00:00:00+09:00
+- project: `runtime-process-guard`
+- canonical_repo: `Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
+- scope: Codex配下のMCP起動経路を1経路だけ選び、pre-launch admission、runtime-owned lease、guarded launcherの限定pilotに接続する
+- excluded: 別監視タスクの新設、`worktree-lifecycle-control` へのowner移管、固定間隔の外部killの再導入
+- goal: Codex Desktopの各tool callでMCP世代が再蓄積する経路を、active sessionを保護したまま起動前のowner確定と終了後検証へ接続する
+- done_when: local implementation、test、1種類のMCPでの人間review付きpilot、再起動後runtime受入、Git/worktree closeoutを個別に確認する
+- external_boundary: process停止、Codex再起動、設定変更、hook有効化、Scheduled Task変更、commit、push、PR、merge、公開はそれぞれ別承認
+- return_path: 実装とlocal test後に本書へ証拠を追記し、runtime操作の前に人間reviewへ戻す
 - denied_scope: Claude設定変更、process一括停止、remote作成、push、公開、外部送信
+
+## 2026-08-18負荷診断の吸収
+
+2026-08-18のread-only実測タスクは、新規の常駐監視または別projectにせず、本契約へ吸収した。観測時はCodex app-server直下にMCP系processが多世代存在し、CPU 100%と長いprocessor queueを確認した。ただしPID、process数、CPU、memoryはスナップショットであり、次回操作前に再測定する。
+
+吸収後の残務は次の3 laneに限定する。
+
+1. **本体実装**: pre-launch admission、実processと永続registryを結ぶruntime-owned lease、テスト用guarded launcherとWindows Job Object adapterを実装する。
+2. **runtime受入**: 人間review後、1種類のMCPだけでpilotし、Codex再起動前後の起動要求数、世代数、CPU queue、保護対象生存、postflightを比較する。
+3. **Git/worktree closeout**: canonical checkoutのowner不明dirty差分を保護し、Scheduled Task参照をcanonicalへ移した後にだけdetached worktreeを整理し、branch、PR、default branch反映を別々に読み戻す。
+
+`worktree-lifecycle-control` は3の安全手順に利用できるが、タスクownerは本repositoryから移さない。
 
 ## trigger_or_due
 
@@ -19,7 +38,11 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 3. [完了] 起動を止めない匿名 `shadow-snapshot` を実装する。
 4. [完了] stdio MCPを単純reuseしないtransport-aware policyをテストする。
 5. [完了] `feedback-cycle` で前回比較、trend判定、next action、state保存を1コマンドへ接続する。
-6. [待機] `HUMAN_REVIEW.md` のパイロットを人間レビューする。
+6. [待機] lease registryを実process観測と永続registryへ接続する。
+7. [待機] テスト用guarded launcherとWindows Job Object adapterを実装する。
+8. [待機] graceful shutdown、timeout、Job close、postflightを統合テストする。
+9. [待機] `HUMAN_REVIEW.md` にpilot証拠を追記し、1種類のMCPでのruntime操作の承認を得る。
+10. [待機] 承認後のpilotと再起動後受入を実施する。
 
 ## evidence_path
 
@@ -49,4 +72,4 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 
 ## next_action
 
-`feedback-cycle` を再実行してtrendを更新する。`human-review-runtime-pressure` の場合だけ、保存stateとlineage差分を人間レビューへ渡す。block／killへの昇格は別承認とする。
+次はlane 1のlease registry接続設計から再開する。その前にread-only診断を1回だけ実行し、最新のlineageと負荷を再測定する。`human-review-runtime-pressure` の場合は保存stateとlineage差分を人間reviewへ渡す。process停止、Codex再起動、block／kill、Scheduled Task変更への昇格は別承認とする。
