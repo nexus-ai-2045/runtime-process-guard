@@ -114,6 +114,18 @@ python -m runtime_process_guard.cli lineage-snapshot `
 
 PIDだけでなく作成時刻も比較するため、PID再利用を新規・消滅の両方として記録します。Mermaidでは前回から追加されたprocessを緑で表示します。
 
+## guarded stdio（限定pilot用）
+
+guard自身が起動したstdio serverだけをWindows Job Objectで所有する入口です。既定はshadowで、
+stdin EOF時の通常終了は管理しますが、idle timeoutによる終了は行いません。
+
+```powershell
+runtime-process-guard guarded-stdio --mode shadow --idle-seconds 600 --grace-seconds 30 -- <executable> <args...>
+```
+
+`--mode enforce` はactive JSON-RPC request追跡が未接続のため、現在はfail-closedで拒否します。
+Obsidian 1種類のshadow受入、request追跡の実装、再レビュー後にだけ解禁します。commandは引数列として直接起動され、shell文字列は受け付けません。
+
 ## Windows plugin policy
 
 `scripts/reconcile_codex_plugin_windows.py`は、plugin cacheの`plugin.json` / `.mcp.json`にあるstdio MCPの`npx`起動だけを`conhost.exe --headless`で包みます。

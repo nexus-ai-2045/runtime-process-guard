@@ -125,8 +125,23 @@ MicrosoftのJob Objectsは、複数プロセスを一単位として制限・計
    `runtime_process_guard.lease` は匿名identity、owner PIDと生成時刻、heartbeat、期限を保持し、
    owner不明・期限切れだがowner生存中のleaseを回収不可としてfail-closedに分類する。
    実processの観測、永続registry、launcherへの接続は次段階に分離する。
-3. Windows Job Object adapterを、テスト用のguarded launcher配下だけで実装する。
-4. graceful shutdown、timeout、Job close、postflightを統合テストする。
-5. 1種類のMCPでshadowから限定pilotへ進める。
+3. [ローカル実装済み / runtime未接続] Windows Job Object adapterとguarded stdio launcherを実装する。
+   `guarded-stdio` は自身が起動した子だけをJobへ割り当て、`KILL_ON_JOB_CLOSE`を設定する。
+   既存PIDの採用、名前一致停止、shell文字列実行は行わない。
+4. [ローカルsmoke済み / 長期受入未実施] stdin EOF時のclose、graceful wait、猶予超過時のmanaged Job終了を検証する。
+   receiptはstderrへ匿名イベントだけを出し、argv、絶対path、MCP本文、環境変数を保存しない。
+5. [人間レビュー待ち] Obsidian MCPだけでshadowから限定pilotへ進める。
+
+## guarded stdio pilotの境界
+
+初期値は `shadow` であり、idle timeoutによる終了を行わない。`enforce` はactive JSON-RPC request追跡が未接続のため、
+現在はfail-closedで拒否する。byte inactivityだけでは長時間requestを誤停止し得るため、設定変更や人間承認だけでは解禁しない。
+
+限定pilotの昇格条件は次のとおり。
+
+- Obsidian 1種類だけを対象にshadowを7日間、最低30 lifecycle観測する。
+- 誤回収0、保護対象停止0、unknownからの自動回収0を満たす。
+- 30回の起動終了smokeで残存0、P95 shutdown 30秒未満、P99 120秒未満を確認する。
+- Codex設定変更、`enforce`有効化、既存プロセス回収は個別の人間レビュー後に行う。
 
 Codex本体のplugin／MCP設定変更、既存起動経路への接続、Scheduled Task登録、外部pushは別の人間承認境界とする。

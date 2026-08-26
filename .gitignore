@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp*/
+.pytest-*/
 .venv/
 dist/
 build/
