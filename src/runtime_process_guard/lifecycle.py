@@ -65,12 +65,12 @@ def decide_lifecycle(
     checked_at = _utc(now, "now")
     if not observation.managed or not observation.owner_matches:
         return LifecycleDecision("report-only", "ownership-unproven")
+    if observation.active_requests > 0:
+        return LifecycleDecision("keep", "request-active")
     if observation.shutdown_requested_at is not None:
         if checked_at - observation.shutdown_requested_at >= policy.grace_timeout:
             return LifecycleDecision("terminate-managed-job", "grace-timeout")
         return LifecycleDecision("keep", "graceful-shutdown-in-progress")
-    if observation.active_requests > 0:
-        return LifecycleDecision("keep", "request-active")
     if not observation.owner_alive:
         return LifecycleDecision("graceful-shutdown", "owner-ended")
     if checked_at - observation.last_activity_at >= policy.idle_timeout:

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Sequence
+from typing import BinaryIO, Sequence
 
 from .windows_job import WindowsJob
 
@@ -58,6 +58,19 @@ def _receipt(event: str, **fields: object) -> None:
     print(json.dumps({"schema": "runtime-process-guard/stdio-v1", "event": event, **fields}, sort_keys=True), file=sys.stderr, flush=True)
 
 
+def _relay_output(source: BinaryIO, destination: BinaryIO, relay_failed: threading.Event) -> None:
+    try:
+        while True:
+            chunk = source.read(65536)
+            if not chunk:
+                relay_failed.set()
+                return
+            destination.write(chunk)
+            destination.flush()
+    except (BrokenPipeError, OSError, ValueError):
+        relay_failed.set()
+
+
 def run_guarded_stdio(options: GuardOptions) -> int:
     """Relay stdio and manage only the process started by this invocation."""
 
@@ -70,10 +83,10 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             options.command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=None,
+            stderr=subprocess.DEVNULL,
             shell=False,
             bufsize=0,
-            creationflags=0x00000004 if os.name == "nt" else 0,
+            creationflags=0x08000004,
         )
         if job is not None:
             job.assign(child.pid)
@@ -114,16 +127,7 @@ def run_guarded_stdio(options: GuardOptions) -> int:
 
     def relay_output() -> None:
         assert child.stdout is not None
-        try:
-            while True:
-                chunk = child.stdout.read(65536)
-                if not chunk:
-                    return
-                sys.stdout.buffer.write(chunk)
-                sys.stdout.buffer.flush()
-        except (BrokenPipeError, OSError, ValueError):
-            stdin_ended.set()
-            relay_failed.set()
+        _relay_output(child.stdout, sys.stdout.buffer, relay_failed)
 
     input_thread = threading.Thread(target=relay_input, name="guard-stdin", daemon=True)
     output_thread = threading.Thread(target=relay_output, name="guard-stdout", daemon=True)
@@ -155,6 +159,18 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             _receipt("stdout-drain-timeout")
             return 70
         return return_code
+    except BaseException:
+        if child.poll() is None:
+            if child.stdin is not None and not child.stdin.closed:
+                child.stdin.close()
+            _receipt("graceful-shutdown-requested", reason="guard-interrupted")
+            try:
+                child.wait(timeout=options.grace_seconds)
+            except subprocess.TimeoutExpired:
+                job.terminate()
+                _receipt("managed-job-terminated", reason="guard-interrupted-timeout")
+                child.wait(timeout=options.grace_seconds)
+        raise
     finally:
         if job is not None:
             job.close()

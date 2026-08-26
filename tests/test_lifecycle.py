@@ -55,6 +55,19 @@ def test_grace_expiry_allows_only_managed_job_termination() -> None:
     assert result.action == "terminate-managed-job"
 
 
+def test_active_request_still_blocks_termination_after_grace_expiry() -> None:
+    result = decide_lifecycle(
+        observe(
+            active_requests=1,
+            shutdown_requested_at=NOW - timedelta(seconds=31),
+        ),
+        now=NOW,
+        policy=POLICY,
+    )
+    assert result.action == "keep"
+    assert result.reason == "request-active"
+
+
 def test_unmanaged_or_unknown_owner_fails_closed() -> None:
     assert decide_lifecycle(observe(managed=False), now=NOW, policy=POLICY).action == "report-only"
     assert decide_lifecycle(observe(owner_matches=False), now=NOW, policy=POLICY).action == "report-only"

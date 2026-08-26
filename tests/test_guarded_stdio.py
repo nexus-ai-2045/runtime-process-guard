@@ -1,11 +1,17 @@
+import io
 import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 
 import pytest
 
-from runtime_process_guard.guarded_stdio import GuardMode, validate_guard_options
+from runtime_process_guard.guarded_stdio import (
+    GuardMode,
+    _relay_output,
+    validate_guard_options,
+)
 
 
 def test_shadow_mode_never_enables_idle_enforcement() -> None:
@@ -80,7 +86,7 @@ def test_windows_shadow_round_trip_and_eof_cleanup() -> None:
             "--",
             sys.executable,
             "-c",
-            "import sys; data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data)",
+            "import sys; sys.stderr.write('secret-path-value'); data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data)",
         ],
         input=b"small-frame\n",
         capture_output=True,
@@ -91,3 +97,10 @@ def test_windows_shadow_round_trip_and_eof_cleanup() -> None:
     assert result.returncode == 0
     assert result.stdout == b"small-frame\n"
     assert b'"managed_job": true' in result.stderr
+    assert b"secret-path-value" not in result.stderr
+
+
+def test_child_stdout_eof_marks_relay_failure() -> None:
+    failed = threading.Event()
+    _relay_output(io.BytesIO(), io.BytesIO(), failed)
+    assert failed.is_set()
