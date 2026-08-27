@@ -322,6 +322,10 @@ def test_build_receipt_keeps_v1_keys(tmp_path) -> None:
     assert receipt["pending"] == 1
     assert receipt["aborted"] == "none"
     assert receipt["next_action"] == "apply-headless-policy"
+    assert receipt["coverage"] == {
+        "plugin_window_policy": "evaluated",
+        "process_lifecycle": "not-evaluated",
+    }
 
 
 SCHEMA = "runtime-process-guard/plugin-window-policy-v1"
@@ -355,6 +359,7 @@ def test_run_cli_apply_allows(tmp_path) -> None:
     assert code == 0
     assert receipt["mode"] == "apply"
     assert receipt["changed"] == 1
+    assert receipt["coverage"]["process_lifecycle"] == "not-evaluated"
     assert json.loads(manifest.read_text(encoding="utf-8"))["tool"]["command"] == (
         "conhost.exe"
     )
@@ -375,6 +380,7 @@ def test_run_cli_reports_unknown_for_invalid_manifest(tmp_path) -> None:
     assert code == 40
     assert receipt["overall"] == "unknown"
     assert receipt["next_action"] == "repair-invalid-plugin-manifest"
+    assert receipt["coverage"]["process_lifecycle"] == "not-evaluated"
 
 
 def test_run_cli_receipt_has_no_manifest_paths(tmp_path) -> None:
