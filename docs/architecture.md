@@ -44,9 +44,9 @@ policyとprivacy処理はOS非依存。収集はpsutilを使い、Windows、macO
 
 ## 次段階
 
-1. lease registry: owner、親PID、開始時刻、終了責任を匿名記録
+1. [shadow実装済み] lease registry: owner、親PID、開始時刻、終了責任を匿名記録
 2. [shadow実装済み] guarded launcher: guard所有の子processだけを起動
-3. postflight: 親終了後の子process回収を確認
+3. [shadow実装済み] postflight: 同じJobのactive process数が0になったことを確認後、自分のleaseだけ解除
 4. MCP adapter: server identity単位のreuse/defer
 
 runtime設定への接続とenforceはread-only境界を越えるため、active request追跡と個別レビュー後に実装する。

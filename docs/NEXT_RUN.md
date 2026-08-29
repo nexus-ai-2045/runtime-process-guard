@@ -2,10 +2,10 @@
 
 ## 状態
 
-- status: local-lifecycle-implemented-awaiting-lease-and-pilot
+- status: local-owned-lifecycle-complete-awaiting-pilot-review
 - owner: codex（このタスクの再開先）
 - recorded_at: 2026-08-19T00:00:00+09:00
-- last_verified_at: 2026-08-28T00:00:00+09:00
+- last_verified_at: 2026-08-29T13:00:00+09:00
 - project: `runtime-process-guard`
 - canonical_repo: `Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
 - scope: Codex配下のMCP起動経路を1経路だけ選び、pre-launch admission、runtime-owned lease、guarded launcherの限定pilotに接続する
@@ -22,7 +22,7 @@
 
 吸収後の残務は次の3 laneに限定する。
 
-1. **本体実装**: read-only preflightとlease分類は既存。PR #7でテスト用guarded launcherとWindows Job Object adapter、graceful shutdown境界まで実装済み。残りはpre-launch admissionと実process・永続registryを結ぶruntime-owned lease、およびpostflightの接続。
+1. **本体実装**: PR #7でpre-launch admission、永続lease registry、guarded launcher、Windows Job Object、heartbeat、graceful shutdown、Job全体postflightまで接続済み。
 2. **runtime受入**: 人間review後、1種類のMCPだけでpilotし、Codex再起動前後の起動要求数、世代数、CPU queue、保護対象生存、postflightを比較する。
 3. **Git/worktree closeout**: canonical checkoutのowner不明dirty差分を保護し、Scheduled Task参照をcanonicalへ移した後にだけdetached worktreeを整理し、branch、PR、default branch反映を別々に読み戻す。
 
@@ -39,9 +39,9 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 3. [完了] 起動を止めない匿名 `shadow-snapshot` を実装する。
 4. [完了] stdio MCPを単純reuseしないtransport-aware policyをテストする。
 5. [完了] `feedback-cycle` で前回比較、trend判定、next action、state保存を1コマンドへ接続する。
-6. [待機] lease registryを実process観測と永続registryへ接続する。
+6. [完了] lease registryを実process観測と永続registryへ接続する。
 7. [完了] PR #7でテスト用guarded launcherとWindows Job Object adapterを実装し、Windows実processを使うshadow round-trip testを追加する。
-8. [一部完了] graceful shutdown、timeout、Job closeはlocal test済み。起動前admission・runtime leaseと同じowned processを照合するpostflightは未接続。
+8. [完了] graceful shutdown、timeout、Job close、起動前admission、runtime lease、同じowned Jobを照合するpostflightをlocal testする。
 9. [待機] `HUMAN_REVIEW.md` にpilot証拠を追記し、1種類のMCPでのruntime操作の承認を得る。
 10. [待機] 承認後のpilotと再起動後受入を実施する。
 
@@ -73,4 +73,4 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 
 ## next_action
 
-次はPR #7のguarded launcherへ、既存preflight admissionとlease registryをfail-closedで接続し、同じowned processの終了を確認するpostflight testを追加する。その前にread-only診断を1回だけ実行し、最新のlineageと負荷を再測定する。`human-review-runtime-pressure` の場合は保存stateとlineage差分を人間reviewへ渡す。1-MCP pilot、process停止、Codex再起動、block／kill、Scheduled Task変更への昇格は別承認とする。
+次はPR #7のCIが実行可能になった後、同一HEADを確認してmerge判断へ戻す。その後、Obsidian 1種類だけのshadow pilot設定を人間reviewし、再起動前後のlineageと負荷を再測定する。process停止、Codex再起動、enforce、block／kill、Scheduled Task変更への昇格は別承認とする。

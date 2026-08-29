@@ -34,6 +34,10 @@ class WindowsJob:
         self._kernel32.OpenThread.restype = wintypes.HANDLE
         self._kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
         self._kernel32.ResumeThread.restype = wintypes.DWORD
+        self._kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p
+        ]
+        self._kernel32.QueryInformationJobObject.restype = wintypes.BOOL
         self._handle = self._kernel32.CreateJobObjectW(None, None)
         if not self._handle:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -65,6 +69,20 @@ class WindowsJob:
                 ("PeakProcessMemoryUsed", ctypes.c_size_t),
                 ("PeakJobMemoryUsed", ctypes.c_size_t),
             ]
+
+        class BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_longlong),
+                ("TotalKernelTime", ctypes.c_longlong),
+                ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+                ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        self._accounting_type = BASIC_ACCOUNTING_INFORMATION
 
         information = EXTENDED_LIMIT_INFORMATION()
         information.BasicLimitInformation.LimitFlags = 0x00002000
@@ -106,6 +124,14 @@ class WindowsJob:
                     raise self._ctypes.WinError(self._ctypes.get_last_error())
             finally:
                 self._kernel32.CloseHandle(thread)
+
+    def active_process_count(self) -> int:
+        information = self._accounting_type()
+        if not self._kernel32.QueryInformationJobObject(
+            self._handle, 1, self._ctypes.byref(information), self._ctypes.sizeof(information), None
+        ):
+            raise self._ctypes.WinError(self._ctypes.get_last_error())
+        return int(information.ActiveProcesses)
 
     def close(self) -> None:
         if self._handle:

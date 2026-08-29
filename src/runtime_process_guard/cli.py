@@ -67,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     guarded.add_argument("--mode", choices=("shadow", "enforce"), default="shadow")
     guarded.add_argument("--idle-seconds", type=float, default=600.0)
     guarded.add_argument("--grace-seconds", type=float, default=30.0)
+    guarded.add_argument("--lease-state", type=Path, required=True)
+    guarded.add_argument("--lease-ttl-seconds", type=float, default=30.0)
+    guarded.add_argument("--min-available-memory-mb", type=int, default=2048)
+    guarded.add_argument("--max-cpu-percent", type=float, default=90.0)
     guarded.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
@@ -159,6 +163,10 @@ def main(argv: list[str] | None = None) -> int:
                 idle_seconds=args.idle_seconds,
                 grace_seconds=args.grace_seconds,
                 command=command,
+                lease_state=args.lease_state,
+                lease_ttl_seconds=args.lease_ttl_seconds,
+                min_available_memory_mb=args.min_available_memory_mb,
+                max_cpu_percent=args.max_cpu_percent,
             )
         except (TypeError, ValueError) as exc:
             build_parser().error(str(exc))

@@ -121,14 +121,14 @@ MicrosoftのJob Objectsは、複数プロセスを一単位として制限・計
 ## 実装順序
 
 1. [完了] 5分自動回収を廃止し、`feedback-cycle` でread-only shadow、前回比較、trend、next action、state保存を接続する。
-2. [ローカル実装済み / runtime未接続] lease registryのschemaとstale判定をpure functionで実装する。
+2. [ローカル実装・launcher接続済み / runtime未接続] lease registryのschemaとstale判定を実装する。
    `runtime_process_guard.lease` は匿名identity、owner PIDと生成時刻、heartbeat、期限を保持し、
    owner不明・期限切れだがowner生存中のleaseを回収不可としてfail-closedに分類する。
-   実processの観測、永続registry、launcherへの接続は次段階に分離する。
+   永続registryはexclusive lockとatomic replaceを使い、launcher起動前の登録、heartbeat、postflight後のCAS解除まで接続済み。
 3. [ローカル実装済み / runtime未接続] Windows Job Object adapterとguarded stdio launcherを実装する。
    `guarded-stdio` は自身が起動した子だけをJobへ割り当て、`KILL_ON_JOB_CLOSE`を設定する。
    既存PIDの採用、名前一致停止、shell文字列実行は行わない。
-4. [ローカルsmoke済み / 長期受入未実施] stdin EOF時のclose、graceful wait、猶予超過時のmanaged Job終了を検証する。
+4. [ローカルsmoke済み / 長期受入未実施] stdin EOF時のclose、graceful wait、猶予超過時のmanaged Job終了、Job全体postflightを検証する。
    receiptはstderrへ匿名イベントだけを出し、argv、絶対path、MCP本文、環境変数を保存しない。
 5. [人間レビュー待ち] Obsidian MCPだけでshadowから限定pilotへ進める。
 

@@ -120,11 +120,12 @@ guard自身が起動したstdio serverだけをWindows Job Objectで所有する
 stdin EOF時の通常終了は管理しますが、idle timeoutによる終了は行いません。
 
 ```powershell
-runtime-process-guard guarded-stdio --mode shadow --idle-seconds 600 --grace-seconds 30 -- <executable> <args...>
+runtime-process-guard guarded-stdio --mode shadow --lease-state <state-path> --idle-seconds 600 --grace-seconds 30 -- <executable> <args...>
 ```
 
 `--mode enforce` はactive JSON-RPC request追跡が未接続のため、現在はfail-closedで拒否します。
 Obsidian 1種類のshadow受入、request追跡の実装、再レビュー後にだけ解禁します。commandは引数列として直接起動され、shell文字列は受け付けません。
+`--lease-state` は明示必須です。registryには匿名identity、owner PID/生成時刻、heartbeat、期限だけを保存し、argv、環境変数、MCP本文は保存しません。
 
 ## Windows plugin policy
 

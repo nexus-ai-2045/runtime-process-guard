@@ -25,6 +25,10 @@ request追跡の実装、Obsidian 1種類の受入証拠、人間レビューを
 - commandはshell文字列ではなくargvとして直接起動する。
 - receiptへargv、絶対path、MCP本文、環境変数を保存しない。
 - Job割当失敗時は子を残さず、起動失敗として返す。
+- admissionの`allow`前、またはleaseのatomic登録前にはprocessを起動しない。
+- registry破損、lock競合、postflight不明では新規起動・自動回収をfail-closedとし、既存stateを自動修復しない。
+- active接続中のheartbeat失敗は即時停止理由にせず、owner生存中の期限切れleaseを回収不可として保持し、終了時結果をunknownにする。
+- 同じJobのactive process数が0と確認できた場合だけ、自分のleaseをCAS解除する。
 - unmanagedまたはowner不明はreport-onlyとする。
 - shadow 7日／30 lifecycle、誤回収0、保護対象停止0をenforce昇格条件とする。
 
