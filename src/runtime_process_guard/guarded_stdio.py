@@ -92,9 +92,20 @@ def validate_guard_options(
     )
 
 
-def _receipt(event: str, **fields: object) -> None:
+def _receipt(event: str, **fields: object) -> bool:
     # Never log argv, paths, message bodies, or environment values.
-    print(json.dumps({"schema": "runtime-process-guard/stdio-v1", "event": event, **fields}, sort_keys=True), file=sys.stderr, flush=True)
+    try:
+        print(
+            json.dumps(
+                {"schema": "runtime-process-guard/stdio-v1", "event": event, **fields},
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+    except (BrokenPipeError, OSError, ValueError):
+        return False
+    return True
 
 
 def _relay_output(source: BinaryIO, destination: BinaryIO, relay_failed: threading.Event) -> None:
@@ -126,6 +137,25 @@ def _make_lease(options: GuardOptions) -> LeaseRecord:
         acquired_at=now,
         heartbeat_at=now,
         expires_at=now + timedelta(seconds=options.lease_ttl_seconds),
+    )
+
+
+def _settle_owned_job(job: WindowsJob, timeout_seconds: float) -> str:
+    """Verify one owned Job, terminate remaining descendants, then verify again."""
+    status = verify_owned_disappearance(
+        job.active_process_count,
+        timeout_seconds=timeout_seconds,
+    )
+    if status != "still-running":
+        return status
+    try:
+        job.terminate()
+    except (OSError, RuntimeError):
+        return "unknown"
+    _receipt("managed-job-terminated", reason="postflight-descendants")
+    return verify_owned_disappearance(
+        job.active_process_count,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -174,6 +204,7 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             job.assign(child.pid)
             job.resume(child.pid)
     except BaseException:
+        disappeared = child is None
         try:
             if child is not None and child.poll() is None:
                 child.terminate()
@@ -182,13 +213,21 @@ def run_guarded_stdio(options: GuardOptions) -> int:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait(timeout=options.grace_seconds)
+        except BaseException:
+            # Cleanup is best-effort here; preserve the original launch failure.
+            _receipt("lease-state-unknown", phase="launch-cleanup-error")
         finally:
+            if child is not None:
+                disappeared = child.poll() is not None
             if job is not None:
                 job.close()
-            try:
-                registry.release(lease.lease_id, lease.owner_identity)
-            except LeaseRegistryError:
-                _receipt("lease-state-unknown", phase="launch-cleanup")
+            if disappeared:
+                try:
+                    registry.release(lease.lease_id, lease.owner_identity)
+                except LeaseRegistryError:
+                    _receipt("lease-state-unknown", phase="launch-cleanup")
+            else:
+                _receipt("lease-state-unknown", phase="launch-cleanup-disappearance")
         raise
 
     stdin_ended = threading.Event()
@@ -255,10 +294,7 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             return False
         if job is None:
             return False
-        postflight = verify_owned_disappearance(
-            job.active_process_count,
-            timeout_seconds=options.grace_seconds,
-        )
+        postflight = _settle_owned_job(job, options.grace_seconds)
         _receipt("postflight", status=postflight)
         if postflight != "gone" or heartbeat_failed.is_set():
             return False

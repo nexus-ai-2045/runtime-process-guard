@@ -13,6 +13,7 @@ from runtime_process_guard.lease_registry import (
     LeaseRegistry,
     LeaseRegistryLockedError,
     LeaseRegistryMalformedError,
+    LeaseRegistryError,
 )
 
 
@@ -167,3 +168,21 @@ def test_two_processes_preserve_both_dedicated_stdio_leases(tmp_path) -> None:
 
     assert sorted(results.get(timeout=2) for _ in workers) == ["ok", "ok"]
     assert len(LeaseRegistry(path).read()) == 2
+
+
+def test_parent_directory_failure_is_normalized(tmp_path, monkeypatch) -> None:
+    registry = LeaseRegistry(tmp_path / "missing" / "leases.json")
+    original_mkdir = Path.mkdir
+
+    def fail_target_parent(path: Path, *args, **kwargs) -> None:
+        if path == registry.path.parent:
+            raise OSError("synthetic inaccessible parent")
+        original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_target_parent)
+
+    with pytest.raises(LeaseRegistryError) as error:
+        registry.acquire(make_lease("alpha"))
+
+    assert "missing" not in str(error.value)
+    assert str(tmp_path) not in str(error.value)

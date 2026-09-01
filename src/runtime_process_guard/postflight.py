@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from typing import Literal
@@ -20,6 +21,8 @@ def verify_owned_disappearance(
 ) -> PostflightStatus:
     """Verify an already-owned group without stopping or adopting any process."""
 
+    if not math.isfinite(timeout_seconds) or not math.isfinite(poll_seconds):
+        raise ValueError("postflight timeouts must be finite")
     if timeout_seconds < 0 or poll_seconds <= 0:
         raise ValueError("postflight timeouts must be non-negative")
     deadline = clock() + timeout_seconds

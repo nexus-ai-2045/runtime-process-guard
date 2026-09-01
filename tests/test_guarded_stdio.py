@@ -12,7 +12,9 @@ import pytest
 from runtime_process_guard.admission import Observation
 from runtime_process_guard.guarded_stdio import (
     GuardMode,
+    _receipt,
     _relay_output,
+    _settle_owned_job,
     run_guarded_stdio,
     validate_guard_options,
 )
@@ -121,6 +123,41 @@ def test_child_stdout_eof_marks_relay_failure() -> None:
     assert failed.is_set()
 
 
+def test_receipt_failure_is_non_throwing(monkeypatch) -> None:
+    class ClosedStderr:
+        def write(self, _value):
+            raise BrokenPipeError("closed")
+
+        def flush(self):
+            raise BrokenPipeError("closed")
+
+    monkeypatch.setattr(sys, "stderr", ClosedStderr())
+
+    assert _receipt("started") is False
+
+
+def test_postflight_terminates_owned_descendants_before_final_status(monkeypatch) -> None:
+    statuses = iter(("still-running", "gone"))
+    monkeypatch.setattr(
+        "runtime_process_guard.guarded_stdio.verify_owned_disappearance",
+        lambda *_args, **_kwargs: next(statuses),
+    )
+
+    class FakeJob:
+        terminate_count = 0
+
+        def active_process_count(self):
+            return 1
+
+        def terminate(self):
+            self.terminate_count += 1
+
+    job = FakeJob()
+
+    assert _settle_owned_job(job, 1) == "gone"
+    assert job.terminate_count == 1
+
+
 def healthy_observation() -> Observation:
     return Observation(
         identity="a" * 64,
@@ -182,3 +219,56 @@ def test_lease_is_persisted_before_process_creation(tmp_path, monkeypatch) -> No
     with pytest.raises(RuntimeError, match="synthetic launch failure"):
         run_guarded_stdio(options)
     assert LeaseRegistry(path).read() == ()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows guarded launcher")
+def test_failed_launch_retains_lease_when_disappearance_is_unknown(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "leases.json"
+    monkeypatch.setattr(
+        "runtime_process_guard.guarded_stdio.observe",
+        lambda *_args, **_kwargs: healthy_observation(),
+    )
+
+    class StuckChild:
+        pid = 4321
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("child", timeout)
+
+    class AssignmentFailureJob:
+        def assign(self, _pid):
+            raise OSError("synthetic assignment failure")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "runtime_process_guard.guarded_stdio.subprocess.Popen",
+        lambda *_args, **_kwargs: StuckChild(),
+    )
+    monkeypatch.setattr(
+        "runtime_process_guard.guarded_stdio.WindowsJob",
+        AssignmentFailureJob,
+    )
+    options = validate_guard_options(
+        mode=GuardMode.SHADOW,
+        idle_seconds=600,
+        grace_seconds=0.1,
+        command=[sys.executable, "-c", "pass"],
+        lease_state=path,
+        min_available_memory_mb=0,
+    )
+
+    with pytest.raises(OSError, match="synthetic assignment failure"):
+        run_guarded_stdio(options)
+
+    assert len(LeaseRegistry(path).read()) == 1

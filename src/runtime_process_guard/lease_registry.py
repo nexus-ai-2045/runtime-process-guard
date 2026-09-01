@@ -131,9 +131,9 @@ class LeaseRegistry:
             "schema": _SCHEMA,
             "leases": [lease.to_dict() for lease in leases],
         }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path: Path | None = None
         try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             descriptor, name = tempfile.mkstemp(
                 prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
             )
@@ -158,7 +158,10 @@ class LeaseRegistry:
 
     @contextmanager
     def _exclusive_lock(self) -> Iterator[None]:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise LeaseRegistryError("lease registry parent is inaccessible") from exc
         if self.lock_path.is_symlink():
             raise LeaseRegistryError("lease registry lock path must not be a symlink")
         try:

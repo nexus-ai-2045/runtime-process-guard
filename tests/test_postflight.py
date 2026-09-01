@@ -1,4 +1,5 @@
 from runtime_process_guard.postflight import verify_owned_disappearance
+import pytest
 
 
 def test_postflight_reports_gone_when_job_is_empty() -> None:
@@ -23,3 +24,16 @@ def test_postflight_reports_still_running_at_deadline() -> None:
         )
         == "still-running"
     )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_postflight_rejects_non_finite_intervals(value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        verify_owned_disappearance(lambda: 0, timeout_seconds=value)
+
+    with pytest.raises(ValueError, match="finite"):
+        verify_owned_disappearance(
+            lambda: 0,
+            timeout_seconds=1,
+            poll_seconds=value,
+        )
