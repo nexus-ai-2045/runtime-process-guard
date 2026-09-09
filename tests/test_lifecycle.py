@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from runtime_process_guard.lifecycle import (
     LifecycleObservation,
     LifecyclePolicy,
@@ -71,3 +73,10 @@ def test_active_request_still_blocks_termination_after_grace_expiry() -> None:
 def test_unmanaged_or_unknown_owner_fails_closed() -> None:
     assert decide_lifecycle(observe(managed=False), now=NOW, policy=POLICY).action == "report-only"
     assert decide_lifecycle(observe(owner_matches=False), now=NOW, policy=POLICY).action == "report-only"
+
+
+@pytest.mark.parametrize("field", ["managed", "owner_matches", "owner_alive"])
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
+def test_observation_rejects_non_boolean_ownership(field, value) -> None:
+    with pytest.raises(ValueError, match=field):
+        observe(**{field: value}, shutdown_requested_at=NOW - timedelta(seconds=31))

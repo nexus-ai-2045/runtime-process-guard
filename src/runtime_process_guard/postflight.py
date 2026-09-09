@@ -35,6 +35,7 @@ def verify_owned_disappearance(
             return "unknown"
         if count == 0:
             return "gone"
-        if clock() >= deadline:
+        remaining = deadline - clock()
+        if remaining <= 0:
             return "still-running"
-        sleep(poll_seconds)
+        sleep(min(poll_seconds, remaining))

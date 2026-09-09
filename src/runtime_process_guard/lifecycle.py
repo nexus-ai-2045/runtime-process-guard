@@ -40,6 +40,9 @@ class LifecycleObservation:
     shutdown_requested_at: datetime | None
 
     def __post_init__(self) -> None:
+        for field in ("managed", "owner_matches", "owner_alive"):
+            if not isinstance(getattr(self, field), bool):
+                raise ValueError(f"{field} must be a boolean")
         if not isinstance(self.active_requests, int) or self.active_requests < 0:
             raise ValueError("active_requests must be a non-negative integer")
         object.__setattr__(self, "last_activity_at", _utc(self.last_activity_at, "last_activity_at"))

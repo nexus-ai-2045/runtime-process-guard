@@ -100,6 +100,8 @@ class LeaseRegistry:
         raise LeaseConflictError(f"lease not found: {lease_id}")
 
     def _read_unlocked(self) -> tuple[LeaseRecord, ...]:
+        if self.path.is_symlink():
+            raise LeaseRegistryMalformedError("lease registry path must not be a symlink")
         if not self.path.exists():
             return ()
         try:
@@ -143,6 +145,8 @@ class LeaseRegistry:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
+            if self.path.is_symlink():
+                raise LeaseRegistryMalformedError("lease registry path must not be a symlink")
             os.replace(temporary_path, self.path)
             temporary_path = None
         except OSError as exc:

@@ -37,3 +37,20 @@ def test_postflight_rejects_non_finite_intervals(value: float) -> None:
             timeout_seconds=1,
             poll_seconds=value,
         )
+
+
+def test_postflight_caps_sleep_to_remaining_deadline() -> None:
+    elapsed = 0.0
+    sleeps = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal elapsed
+        sleeps.append(seconds)
+        elapsed += seconds
+
+    assert verify_owned_disappearance(
+        lambda: 1, timeout_seconds=1, poll_seconds=60,
+        clock=lambda: elapsed, sleep=sleep,
+    ) == "still-running"
+    assert sleeps == [1.0]
+    assert elapsed == 1.0

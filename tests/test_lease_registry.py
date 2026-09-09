@@ -186,3 +186,35 @@ def test_parent_directory_failure_is_normalized(tmp_path, monkeypatch) -> None:
 
     assert "missing" not in str(error.value)
     assert str(tmp_path) not in str(error.value)
+
+
+@pytest.mark.parametrize("dangling", [False, True])
+def test_symlink_registry_is_rejected_without_replacement(tmp_path, dangling) -> None:
+    target = tmp_path / "target.json"
+    if not dangling:
+        LeaseRegistry(target).acquire(make_lease("alpha"))
+    before = target.read_bytes() if target.exists() else None
+    link = tmp_path / "link.json"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    registry = LeaseRegistry(link)
+    for operation in (registry.read, lambda: registry.acquire(make_lease("bravo"))):
+        with pytest.raises(LeaseRegistryMalformedError, match="symlink"):
+            operation()
+    assert link.is_symlink()
+    assert (target.read_bytes() if target.exists() else None) == before
+
+
+def test_registry_symlink_gate_precedes_read_and_write(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "leases.json"
+    registry = LeaseRegistry(path)
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda candidate: candidate == path or original(candidate))
+    with pytest.raises(LeaseRegistryMalformedError, match="symlink"):
+        registry.read()
+    with pytest.raises(LeaseRegistryMalformedError, match="symlink"):
+        registry._write_unlocked([make_lease("alpha")])
+    assert not path.exists()
+    assert not list(tmp_path.glob("*.tmp"))
