@@ -13,6 +13,7 @@ import time
 from typing import Iterator, Mapping
 
 from .lease import LeaseRecord
+from .plugin_window_policy import _is_link_like
 
 
 _SCHEMA = "runtime_process_guard.lease_registry.v1"
@@ -100,8 +101,7 @@ class LeaseRegistry:
         raise LeaseConflictError(f"lease not found: {lease_id}")
 
     def _read_unlocked(self) -> tuple[LeaseRecord, ...]:
-        if self.path.is_symlink():
-            raise LeaseRegistryMalformedError("lease registry path must not be a symlink")
+        self._assert_path_safe()
         if not self.path.exists():
             return ()
         try:
@@ -129,6 +129,7 @@ class LeaseRegistry:
             ) from exc
 
     def _write_unlocked(self, leases: list[LeaseRecord]) -> None:
+        self._assert_path_safe()
         payload = {
             "schema": _SCHEMA,
             "leases": [lease.to_dict() for lease in leases],
@@ -145,8 +146,7 @@ class LeaseRegistry:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            if self.path.is_symlink():
-                raise LeaseRegistryMalformedError("lease registry path must not be a symlink")
+            self._assert_path_safe()
             os.replace(temporary_path, self.path)
             temporary_path = None
         except OSError as exc:
@@ -162,12 +162,12 @@ class LeaseRegistry:
 
     @contextmanager
     def _exclusive_lock(self) -> Iterator[None]:
+        self._assert_path_safe()
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise LeaseRegistryError("lease registry parent is inaccessible") from exc
-        if self.lock_path.is_symlink():
-            raise LeaseRegistryError("lease registry lock path must not be a symlink")
+        self._assert_path_safe(lock_path=True)
         try:
             descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         except OSError as exc:
@@ -196,6 +196,21 @@ class LeaseRegistry:
             except OSError:
                 pass
             os.close(descriptor)
+
+    def _assert_path_safe(self, *, lock_path: bool = False) -> None:
+        """Reject registry and lock paths below symlink/reparse ancestors."""
+        target = self.lock_path if lock_path else self.path
+        current = target
+        while True:
+            if current.is_symlink() or (current.exists() and _is_link_like(current)):
+                kind = "lock" if lock_path else "registry"
+                raise LeaseRegistryMalformedError(
+                    f"lease {kind} path must not contain a symlink or reparse point"
+                )
+            parent = current.parent
+            if parent == current:
+                return
+            current = parent
 
 
 def _raise_value_error(message: str) -> LeaseRecord:

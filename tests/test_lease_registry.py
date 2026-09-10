@@ -218,3 +218,19 @@ def test_registry_symlink_gate_precedes_read_and_write(tmp_path, monkeypatch) ->
         registry._write_unlocked([make_lease("alpha")])
     assert not path.exists()
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_registry_rejects_symlinked_parent_before_lock_or_write(tmp_path) -> None:
+    target = tmp_path / "real"
+    target.mkdir()
+    parent_link = tmp_path / "parent-link"
+    try:
+        parent_link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    registry = LeaseRegistry(parent_link / "leases.json")
+    for operation in (registry.read, lambda: registry.acquire(make_lease("alpha"))):
+        with pytest.raises(LeaseRegistryMalformedError, match="symlink or reparse"):
+            operation()
+    assert not (target / "leases.json").exists()
+    assert not (target / "leases.json.lock").exists()
