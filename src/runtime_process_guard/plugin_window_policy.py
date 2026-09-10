@@ -286,6 +286,10 @@ def build_receipt(
         "schema_version": SCHEMA_VERSION,
         "observed_at": observed_at or datetime.now(timezone.utc).isoformat(),
         "overall": _overall(result),
+        "coverage": {
+            "plugin_window_policy": "evaluated",
+            "process_lifecycle": "not-evaluated",
+        },
         "mode": mode,
         "aborted": result.aborted or "none",
         "scanned": result.scanned,

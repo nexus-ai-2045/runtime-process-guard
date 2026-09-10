@@ -116,6 +116,9 @@ PIDだけでなく作成時刻も比較するため、PID再利用を新規・�
 
 ## Windows plugin policy
 
+receipt の `overall` は plugin cache の window policy だけを評価します。
+`coverage.process_lifecycle` は常に `not-evaluated` であり、`overall=ok` はprocess lifecycleの健全性を意味しません。
+
 `scripts/reconcile_codex_plugin_windows.py`は、plugin cacheの`plugin.json` / `.mcp.json`にあるstdio MCPの`npx`起動だけを`conhost.exe --headless`で包みます。
 
 - `plugin.json`：`mcpServers`配下だけが対象
