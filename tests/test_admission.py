@@ -47,3 +47,18 @@ def test_defer_when_cpu_is_saturated() -> None:
 def test_unknown_when_collection_failed() -> None:
     result = evaluate(observation(collection_errors=("access-denied",)), Budget())
     assert result.decision == "unknown"
+
+
+def test_unknown_when_any_process_is_inaccessible() -> None:
+    result = evaluate(observation(inaccessible_processes=1), Budget())
+    assert result.decision == "unknown"
+    assert "process-observation-incomplete" in result.reason_codes
+
+
+def test_dedicated_stdio_does_not_require_unrelated_process_cmdlines() -> None:
+    result = evaluate(
+        observation(inaccessible_processes=1, reuse_policy="dedicated-stdio"),
+        Budget(),
+    )
+    assert result.decision == "allow"
+    assert "unrelated-process-observation-incomplete" in result.reason_codes

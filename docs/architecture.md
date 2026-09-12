@@ -19,7 +19,9 @@ launch request
       unknown : 観測不能。起動しない
 ```
 
-現在のMVPは `preflight` までで、対象processを起動しない。これにより、判定器自身に停止・起動権限を持たせない。
+`preflight` は引き続き既定のread-only入口である。限定pilot用の `guarded-stdio --mode shadow` は、
+guard自身が起動したprocessだけを所有する。idle enforcementは未接続でfail-closedとし、正本判断は
+`docs/adr/ADR-0001-runtime-owned-stdio-lifecycle.md`を参照する。
 
 ## identity
 
@@ -42,9 +44,9 @@ policyとprivacy処理はOS非依存。収集はpsutilを使い、Windows、macO
 
 ## 次段階
 
-1. lease registry: owner、親PID、開始時刻、終了責任を匿名記録
-2. guarded launcher: `allow`時だけ子processを起動
-3. postflight: 親終了後の子process回収を確認
+1. [shadow実装済み] lease registry: owner、親PID、開始時刻、終了責任を匿名記録
+2. [shadow実装済み] guarded launcher: guard所有の子processだけを起動
+3. [shadow実装済み] postflight: 同じJobのactive process数が0になったことを確認後、自分のleaseだけ解除
 4. MCP adapter: server identity単位のreuse/defer
 
-これらはMVPのread-only境界を越えるため、個別レビュー後に実装する。
+runtime設定への接続とenforceはread-only境界を越えるため、active request追跡と個別レビュー後に実装する。

@@ -40,12 +40,17 @@ def evaluate(observation: Observation, budget: Budget) -> AdmissionResult:
     if observation.collection_errors:
         decision = "unknown"
         reasons.append("collection-failed")
+    elif observation.inaccessible_processes and observation.reuse_policy != "dedicated-stdio":
+        decision = "unknown"
+        reasons.append("process-observation-incomplete")
     elif observation.duplicate_pids and observation.reuse_policy == "singleton":
         decision = "reuse"
         reasons.append("same-identity-running")
     else:
         if observation.duplicate_pids and observation.reuse_policy == "dedicated-stdio":
             reasons.append("same-identity-dedicated-stdio")
+        if observation.inaccessible_processes:
+            reasons.append("unrelated-process-observation-incomplete")
         pressure_reasons: list[str] = []
         if observation.available_memory_mb < budget.min_available_memory_mb:
             pressure_reasons.append("available-memory-below-budget")

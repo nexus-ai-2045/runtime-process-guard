@@ -23,6 +23,7 @@ from .lineage import (
     render_mermaid,
 )
 from .shadow import collect_shadow_snapshot
+from .guarded_stdio import GuardMode, run_guarded_stdio, validate_guard_options
 
 EXIT_CODES = {"allow": 0, "reuse": 10, "defer": 20, "deny": 30, "unknown": 40}
 
@@ -62,6 +63,15 @@ def build_parser() -> argparse.ArgumentParser:
     lineage.add_argument("--report-path", type=Path, required=True)
     lineage.add_argument("--mermaid-path", type=Path, required=True)
     lineage.add_argument("--previous-report", type=Path)
+    guarded = subparsers.add_parser("guarded-stdio")
+    guarded.add_argument("--mode", choices=("shadow", "enforce"), default="shadow")
+    guarded.add_argument("--idle-seconds", type=float, default=600.0)
+    guarded.add_argument("--grace-seconds", type=float, default=30.0)
+    guarded.add_argument("--lease-state", type=Path, required=True)
+    guarded.add_argument("--lease-ttl-seconds", type=float, default=30.0)
+    guarded.add_argument("--min-available-memory-mb", type=int, default=2048)
+    guarded.add_argument("--max-cpu-percent", type=float, default=90.0)
+    guarded.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
 
@@ -143,6 +153,24 @@ def _valid_lineage_report(report: object) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.action == "guarded-stdio":
+        command = list(args.command)
+        if command and command[0] == "--":
+            command.pop(0)
+        try:
+            options = validate_guard_options(
+                mode=GuardMode(args.mode),
+                idle_seconds=args.idle_seconds,
+                grace_seconds=args.grace_seconds,
+                command=command,
+                lease_state=args.lease_state,
+                lease_ttl_seconds=args.lease_ttl_seconds,
+                min_available_memory_mb=args.min_available_memory_mb,
+                max_cpu_percent=args.max_cpu_percent,
+            )
+        except (TypeError, ValueError) as exc:
+            build_parser().error(str(exc))
+        return run_guarded_stdio(options)
     if args.action == "feedback-cycle":
         lock = _try_acquire_feedback_lock(args.state_path)
         if lock is None:
