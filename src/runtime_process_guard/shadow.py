@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import math
 
 import psutil
 
 from .privacy import command_identity
+
+
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -64,11 +68,14 @@ def _has_owner(process: psutil.Process, owner_name: str) -> bool | None:
             current = current.parent()
             if current is None:
                 return False
-            if current.name().lower() == expected:
+            name = current.name()
+            if not isinstance(name, str) or not name:
+                return None
+            if name.lower() == expected:
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             return None
-    return False
+    return None
 
 
 def collect_shadow_snapshot(
@@ -76,32 +83,57 @@ def collect_shadow_snapshot(
 ) -> dict[str, object]:
     rows: list[ProcessIdentityRow] = []
     inaccessible = 0
-    for process in psutil.process_iter(["name", "cmdline", "create_time"]):
-        try:
-            if (
-                process_name
-                and (process.info.get("name") or "").lower() != process_name.lower()
-            ):
-                continue
-            cmdline = process.info.get("cmdline") or []
-            if not cmdline:
-                continue
-            ownership = _has_owner(process, owner_name)
-            if ownership is None:
-                inaccessible += 1
-                continue
-            if not ownership:
-                continue
-            rows.append(
-                ProcessIdentityRow(
-                    identity=command_identity(cmdline),
-                    created_at_epoch=float(process.info["create_time"]),
+    try:
+        processes = psutil.process_iter(
+            ["name", "cmdline", "create_time"], ad_value=_MISSING
+        )
+        for process in processes:
+            try:
+                info = getattr(process, "info", {})
+                if not isinstance(info, dict):
+                    inaccessible += 1
+                    continue
+                name = info.get("name", _MISSING)
+                if process_name and (not isinstance(name, str) or not name):
+                    inaccessible += 1
+                    continue
+                if process_name and name.lower() != process_name.lower():
+                    continue
+                ownership = _has_owner(process, owner_name)
+                if ownership is None:
+                    inaccessible += 1
+                    continue
+                if not ownership:
+                    continue
+                cmdline = info.get("cmdline", _MISSING)
+                created_at = info.get("create_time", _MISSING)
+                if (
+                    not isinstance(cmdline, (list, tuple))
+                    or not cmdline
+                    or not isinstance(created_at, (int, float))
+                    or isinstance(created_at, bool)
+                    or created_at <= 0
+                    or not math.isfinite(float(created_at))
+                    or not all(isinstance(value, str) for value in cmdline)
+                ):
+                    inaccessible += 1
+                    continue
+                # Reject finite values that cannot be rendered on this platform
+                # before they reach generation grouping outside this boundary.
+                datetime.fromtimestamp(created_at, timezone.utc)
+                rows.append(
+                    ProcessIdentityRow(
+                        identity=command_identity(cmdline),
+                        created_at_epoch=float(created_at),
+                    )
                 )
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            inaccessible += 1
-        except (TypeError, ValueError):
-            continue
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                inaccessible += 1
+            except (TypeError, ValueError, OverflowError, OSError):
+                inaccessible += 1
+    except Exception:
+        # Enumeration failures are intentionally anonymous and fail closed.
+        inaccessible += 1
 
     generations = group_generations(rows)
     return {
@@ -113,5 +145,6 @@ def collect_shadow_snapshot(
         "process_count": len(rows),
         "generation_count_lower_bound": len(generations),
         "inaccessible_processes": inaccessible,
+        "observation_complete": inaccessible == 0,
         "generations": [asdict(generation) for generation in generations],
     }

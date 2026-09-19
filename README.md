@@ -2,7 +2,7 @@
 
 ローカルのsubprocess、MCP server、automationを起動する前に、重複・CPU・メモリ・親子関係を確認するprivacy-firstの実行前ガードです。
 
-既定動作はread-onlyです。プロセス停止、設定変更、外部送信、telemetryは行いません。
+観測・起動判定の入口はread-onlyです。明示的に選ぶ `guarded-stdio` は子プロセスの起動と終了を管理します。設定変更、外部送信、telemetryは行いません。
 
 ## できること
 
@@ -68,6 +68,10 @@ python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
 
 stdio MCPはclientごとに専用pipeを持つため、既存processへ単純にreuseできません。`--reuse-policy dedicated-stdio`では、同一identityを観測してもreuseせず、resource pressureだけで`allow` / `defer`を判断します。
 
+singleton判定では、コマンドを読み取れないprocessがあれば `unknown` を返します。
+`dedicated-stdio` は他processを再利用しないため、その欠落を件数として伝えつつ資源予算を判定します。
+process一覧や資源計測そのものに失敗した場合は、どちらも `unknown` です。
+
 ## 主なコマンド
 
 ### 実行前確認
@@ -81,6 +85,11 @@ python -m runtime_process_guard.cli preflight --reuse-policy dedicated-stdio -- 
 ```powershell
 python -m runtime_process_guard.cli shadow-snapshot --owner codex.exe --process-name node.exe --json
 ```
+
+対象候補の属性・親子関係を確認できない場合は、不完全な観測として終了コード `40`、
+`overall=unknown`、`complete=false`、`next_action=repair-observation` を返します。
+観測できた件数は残しますが、processが存在しない証拠やpilotの成功回数には使いません。
+`feedback-cycle` もその観測では前回の正常stateを上書きしません。
 
 ### 前回との差分と傾向
 
@@ -116,8 +125,11 @@ PIDだけでなく作成時刻も比較するため、PID再利用を新規・�
 
 ## guarded stdio（限定pilot用）
 
-guard自身が起動したstdio serverだけをWindows Job Objectで所有する入口です。既定はshadowで、
-stdin EOF時の通常終了は管理しますが、idle timeoutによる終了は行いません。
+guard自身が起動したstdio serverだけをWindows Job Objectで所有する、承認後の限定pilot用入口です。
+既存CLIとの互換性のためmode名は `shadow` を維持していますが、読み取り専用ではありません。
+起動前admissionで資源不足・観測失敗時の起動を抑止し、leaseを保存し、子を起動します。
+stdin EOF、relay終了、guardの中断時には通常終了を待ち、猶予超過や子孫残存時には所有Jobを終了して消滅を検証します。
+`shadow` が無効にするのはidle timeoutによる終了です。観測のみには `shadow-snapshot` を使います。
 
 ```powershell
 runtime-process-guard guarded-stdio --mode shadow --lease-state <state-path> --idle-seconds 600 --grace-seconds 30 -- <executable> <args...>

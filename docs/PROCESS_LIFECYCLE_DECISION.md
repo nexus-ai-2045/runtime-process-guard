@@ -134,7 +134,9 @@ MicrosoftのJob Objectsは、複数プロセスを一単位として制限・計
 
 ## guarded stdio pilotの境界
 
-初期値は `shadow` であり、idle timeoutによる終了を行わない。`enforce` はactive JSON-RPC request追跡が未接続のため、
+観測のみの `shadow-snapshot` と、管理付き起動の `guarded-stdio --mode shadow` を分ける。
+後者はadmissionによる起動抑止、lease保存、子の起動と所有Jobの終了・消滅確認を行う。読み取り専用ではない。
+互換性のため初期mode名は `shadow` を維持し、idle timeoutによる終了を行わない。`enforce` はactive JSON-RPC request追跡が未接続のため、
 現在はfail-closedで拒否する。byte inactivityだけでは長時間requestを誤停止し得るため、設定変更や人間承認だけでは解禁しない。
 
 限定pilotの昇格条件は次のとおり。
