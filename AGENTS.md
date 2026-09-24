@@ -18,3 +18,8 @@
 - policyはpure functionとして単体テストする。
 - collectorとlauncherを分離し、テストで実processを不要にする。
 - 完了報告ではlocal testと実runtime統合を分ける。
+
+## Repository operating contract
+
+- 作業前に `REPO_GOAL.md` と `.repo-operating-contracts/manifest.json` を読み、このrepositoryの目的と契約を確認する。
+- 変更後は `python .repo-operating-contracts/check.py` を実行し、契約からのdriftがないことを確認する。
