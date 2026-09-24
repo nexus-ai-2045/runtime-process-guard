@@ -32,3 +32,30 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+  consistency:
+    # .repo-preflight-consistency.json を宣言だけで終わらせず実行する。
+    # 検査ロジックは複製せず、upstream repo-preflight を固定SHAで checkout して呼ぶ。
+    name: repo-preflight consistency gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout repo-preflight (upstream, pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: nexus-ai-2045/repo-preflight
+          ref: 8da9469710c1aab436bc621f65e907894cc30eb5
+          path: .tools/repo-preflight
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: repo-preflight consistency gate
+        run: python .tools/repo-preflight/scripts/consistency_gate.py --repo . --base-ref "refs/remotes/origin/${{ github.base_ref || 'baseline' }}" --require-config --require-mode shadow --json
