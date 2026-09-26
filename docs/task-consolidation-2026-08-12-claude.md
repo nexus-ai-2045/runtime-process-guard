@@ -16,8 +16,8 @@
 
 | 手順 | 実測値 |
 |---|---|
-| CCD session metadata | `%APPDATA%\Claude\claude-code-sessions\<ws>\<proj>\local_<sid>.json` = 118 件 |
-| Deeplink 解決 | 各 metadata の `cliSessionId` → `~\.claude\projects\<cwd-slug>\<cliSessionId>.jsonl`（対応 118/118、欠落 0） |
+| CCD session metadata | `<user-home>\AppData\Roaming\Claude\claude-code-sessions\<ws>\<proj>\local_<sid>.json` = 118 件 |
+| Deeplink 解決 | 各 metadata の `cliSessionId` → `<claude-projects-dir>\<cwd-slug>\<cliSessionId>.jsonl`（対応 118/118、欠落 0） |
 | 語彙走査 | テーマ語 11 種で全件走査 → ヒット 113、core 語 2 件以上 95 |
 | transcript 直読 | 31 session（並列 worker 24 体） |
 
@@ -45,7 +45,7 @@
 
 ## 前提の訂正（実測により覆した記述）
 
-1. **local clone は存在する**。`C:\Users\yas\Projects\Documents\.repos\nexus_ai\private\runtime-process-guard`。
+1. **local clone は存在する**。`<local-checkout>`（本 repo のローカル clone）。
    初回の `find -Depth 6` が階層不足で取りこぼしていた。
 2. **「宙吊りの runtime-process-doctor 救出」は PR #475（MERGED 2026-08-02）**。#474 は別件（事実来歴 hook の Python3 探索、CLOSED）。
 3. **本ドメインには repo が 2 つある**。本 repo（Codex 配下の admission control）と、
