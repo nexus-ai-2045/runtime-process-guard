@@ -4,6 +4,10 @@
 
 既定動作はread-onlyです。プロセス停止、設定変更、外部送信、telemetryは行いません。
 
+## 目的
+
+ローカルで subprocess / MCP / automation を起動する直前に、重複・資源圧・親子関係を匿名で判定し、危険な一括停止や秘密の保存をせずに起動可否を返す。
+
 ## できること
 
 | 機能 | 用途 |
@@ -36,25 +40,11 @@ Windows、macOS、Linuxで共通の判定語彙を使います。
 
 ## クイックスタート
 
-```powershell
-python -m pip install -e .
-python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
-```
+次の URL を AI に貼り、先に危険レビューを出させてください。削除・GitHub write・visibility・secret・unknown を安全と読まないこと。
 
-JSONが必要な場合：
+https://github.com/nexus-ai-2045/runtime-process-guard
 
-```powershell
-python -m runtime_process_guard.cli preflight --json -- node server.mjs --stdio
-```
-
-editable install前に直接試す場合：
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
-```
-
-`preflight`は対象プロセスを起動しません。呼び出し側が判定結果を確認してから起動してください。
+貼付後の確認例（人が叩く手順ではない）: `python -m runtime_process_guard.cli preflight -- node server.mjs --stdio`。`preflight` は対象を起動しません。
 
 ## 判定と終了コード
 
@@ -192,4 +182,4 @@ git diff --check
 
 ## Repository visibility
 
-このrepositoryはprivate運用を前提とします。ライセンスはAll rights reservedです。push、Pull Request、merge、visibility変更、公開はそれぞれ別の承認境界です。
+このrepositoryは public（MIT）です。push、Pull Request、merge、Release 作成はそれぞれ別の承認境界です。

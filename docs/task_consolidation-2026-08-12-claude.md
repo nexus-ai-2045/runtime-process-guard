@@ -9,7 +9,7 @@
 - 管制（Codex 側 / 前回）: [`codex://thread/019fda3d-67d9-7a82-9d22-001d57159ef0`](codex://thread/019fda3d-67d9-7a82-9d22-001d57159ef0)
 - 実装正本: `nexus-ai-2045/runtime-process-guard`（private）
 
-[`task-consolidation-2026-08-10.md`](task-consolidation-2026-08-10.md) が回収したのは **Codex thread 18 件のみ**。
+[`task_consolidation-2026-08-10.md`](task_consolidation-2026-08-10.md) が回収したのは **Codex thread 18 件のみ**。
 本書は未回収だった **Claude Code チャット側** を対象とする。
 
 ## 探索方法（実測）
@@ -155,7 +155,7 @@
 
 | 引継ぎ先 | 内容 | receipt |
 |---|---|---|
-| `local_c9432334`（Note Publishing Suite 設計レビュー） | daily-note-job が draft 止まり / `content/公開待ち/` 実体なし / published 台帳二重化 / digest の JST-UTC 混在 7 件脱落 / say_yas 排除の PR #530・#524 未処理 | queued |
+| `local_c9432334`（Note Publishing Suite 設計レビュー） | daily-note-job が draft 止まり / `content/公開待ち/` 実体なし / published 台帳二重化 / digest の JST-UTC 混在 7 件脱落 / [個人identity] 排除の PR #530・#524 未処理 | queued |
 | `local_7ef92d40`（ワークツリーの整理） | branch `claude/runtime-process-doctor-salvage-20260728` の `-D` / squash-merge 済み 49 本の削除 / dirty worktree 回収 blocked / Storage Sense による `%TEMP%` worktree 破損 / main checkout 分岐 | sent |
 | `local_a364be97`（DCB snapshot store分裂の解消） | person-registry 空 と snowflake 決定論照合 / wiki 執筆層の分離 / DCB scheduled task の conhost 起動 | sent |
 
@@ -174,7 +174,7 @@ protocol 手順 5 に従い管制へ戻す。
 
 ## 2026-08-12 同日追補
 
-本書を起票した後、同日中に確定した事項。前例（[`task-consolidation-2026-08-10.md`](task-consolidation-2026-08-10.md)
+本書を起票した後、同日中に確定した事項。前例（[`task_consolidation-2026-08-10.md`](task_consolidation-2026-08-10.md)
 の「厳格再監査」節）に倣い、追記はここで閉じる。以降の差分は次の日付の記録へ移す。
 
 ### C0 現状測定（read-only / 承認不要で実施）
