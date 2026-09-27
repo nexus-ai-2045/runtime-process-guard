@@ -7,7 +7,7 @@
 
 - 管制（Claude 側）: この Claude Code チャット `local_bd2be0d2-52c5-4740-9d76-810e3fdbbac9`
 - 管制（Codex 側 / 前回）: [`codex://thread/019fda3d-67d9-7a82-9d22-001d57159ef0`](codex://thread/019fda3d-67d9-7a82-9d22-001d57159ef0)
-- 実装正本: `nexus-ai-2045/runtime-process-guard`（private）
+- 実装正本: `nexus-ai-2045/runtime-process-guard`（当時 private。現在は public / MIT）
 
 [`task_consolidation-2026-08-10.md`](task_consolidation-2026-08-10.md) が回収したのは **Codex thread 18 件のみ**。
 本書は未回収だった **Claude Code チャット側** を対象とする。

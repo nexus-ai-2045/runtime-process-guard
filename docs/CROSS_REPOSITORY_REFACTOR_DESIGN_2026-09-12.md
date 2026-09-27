@@ -28,7 +28,7 @@
 
 [事実: gh api user / gh repo view / gh pr list / git status / git worktree list]
 
-- 接続アカウントは `nexus-ai-2045`。対象は PRIVATE、既定ブランチは `baseline`。
+- 接続アカウントは `nexus-ai-2045`。対象は（2026-09-12時点）PRIVATEだったが、現在は public。既定ブランチは `baseline`。
 - 調査時のremote既定HEAD: `86d2e9a0f7a7f23694774739019e76249a78d64c`。
 - 正本ローカルは `codex/lease-registry`、HEAD `1e4920d0a615699ee147b073575f23aeff6a0d18`。既存文書に未コミット変更があるため触れていない。
 - PR #7はOPEN、HEAD `fda3dce8c7582780c0e36c05d9d6c5bf31a7f434`。PR #8はMERGED。

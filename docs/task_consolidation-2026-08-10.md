@@ -3,7 +3,7 @@
 ## 統合先
 
 - 管制・実装: [このCodexタスク](codex://thread/019fda3d-67d9-7a82-9d22-001d57159ef0)
-- 実装正本: `nexus-ai-2045/runtime-process-guard`（private）
+- 実装正本: `nexus-ai-2045/runtime-process-guard`（当時 private。現在は public / MIT）
 - 対象機能: Codex配下processのread-only観測、起動前判定、世代比較、lineage差分、fail-closedフィードバック
 
 ## 回収したタスク
