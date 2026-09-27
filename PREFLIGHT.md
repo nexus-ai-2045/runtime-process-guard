@@ -6,7 +6,7 @@
 
 - repository: `nexus-ai-2045/runtime-process-guard`
 - visibility: public（MIT。Release 作成は別承認）
-- 対象branch: `codex/plugin-window-policy`
+- 対象branch: `baseline`
 - public化: 済 / release・外部告知: 別承認（本記録はゲート測定用）
 - 人間による最終目視とmerge判断: 未完了
 
