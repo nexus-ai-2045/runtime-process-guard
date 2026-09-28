@@ -1,7 +1,77 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nexus-ai-2045/repo-preflight/main/schemas/repository-consistency.schema.json",
+  "$schema": "https://raw.githubusercontent.com/nexus-ai-2045/repo-preflight/f825268978228a3cfb2f5ecba16a74d424134b1a/schemas/repository-consistency.schema.json",
   "schema": "repo-preflight.consistency/v1",
   "mode": "shadow",
   "ratchet": {"baseline": []},
-  "markdown": {"include": ["README.md", "docs/**/*.md"]}
+  "markdown": {
+    "include": [
+      "README.md",
+      "CONTRIBUTING.md",
+      "PREFLIGHT.md",
+      "SECURITY.md",
+      "AGENTS.md",
+      "REPO_GOAL.md",
+      "docs/**/*.md"
+    ]
+  },
+  "readme_contracts": {
+    "required_paths": [
+      "src/runtime_process_guard/cli.py",
+      "src/runtime_process_guard/admission.py",
+      "src/runtime_process_guard/privacy.py",
+      "src/runtime_process_guard/guarded_stdio.py",
+      "src/runtime_process_guard/plugin_window_policy.py",
+      "scripts/reconcile_codex_plugin_windows.py",
+      "docs/architecture.md",
+      "tests/test_admission.py",
+      "tests/test_cli.py"
+    ],
+    "commands": [
+      {
+        "text": "python -m runtime_process_guard.cli preflight",
+        "paths": [
+          "src/runtime_process_guard/cli.py",
+          "src/runtime_process_guard/admission.py"
+        ]
+      },
+      {
+        "text": "python -m runtime_process_guard.cli shadow-snapshot",
+        "paths": [
+          "src/runtime_process_guard/cli.py",
+          "src/runtime_process_guard/shadow.py"
+        ]
+      },
+      {
+        "text": "runtime-process-guard guarded-stdio",
+        "paths": [
+          "src/runtime_process_guard/cli.py",
+          "src/runtime_process_guard/guarded_stdio.py"
+        ]
+      },
+      {
+        "text": "python scripts/reconcile_codex_plugin_windows.py",
+        "paths": [
+          "scripts/reconcile_codex_plugin_windows.py",
+          "src/runtime_process_guard/plugin_window_policy.py"
+        ]
+      }
+    ]
+  },
+  "impact_map": [
+    {
+      "change": ["src/**", "tests/**", "scripts/**"],
+      "requires_any": ["README.md", "docs/**", "tests/**"]
+    },
+    {
+      "change": [
+        ".github/workflows/**",
+        ".repo-preflight-consistency.json",
+        ".ai-ratchet-gate/**",
+        "requirements-tools.txt"
+      ],
+      "requires_any": ["README.md", "CONTRIBUTING.md", "PREFLIGHT.md"],
+      "allow_github_action_ref_updates": true
+    }
+  ],
+  "generated_artifacts": []
 }
