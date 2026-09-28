@@ -5,11 +5,10 @@
 ## 対象と公開境界
 
 - repository: `nexus-ai-2045/runtime-process-guard`
-- visibility: **private**（維持。visibility 変更・公開は別承認）
-- default branch: `baseline`
-- ライセンス: All rights reserved
-- public化・release・外部告知: 対象外
-- 人間による最終目視と merge 判断: 必須（自動緑は merge 承認ではない）
+- visibility: public（MIT。Release 作成は別承認）
+- 対象branch: `baseline`
+- public化: 済 / release・外部告知: 別承認（本記録はゲート測定用）
+- 人間による最終目視とmerge判断: 未完了
 
 ## 開発保証ゲート
 
@@ -64,13 +63,14 @@ Actions で同等確認する場合は、feature 枝を選んで `repository-gua
 - CI: Ubuntu / Windows、Python 3.11 / 3.13（`ci.yml`）
 - secret / personal path / required documents: repo-preflight（上流 pin）
 - tracked ∧ ignored の新規悪化: ai-ratchet-gate
+- GitHub identity / remote owner / visibility: github-cli-ops-guard
 
 ## 保証境界
 
 自動検査の pass は、secret 不存在の完全保証、依存脆弱性不存在、live runtime の継続動作、
 Scheduled Task 再登録、公開承認、merge 承認を意味しない。`unknown` と人間レビュー待ちは完了へ丸めない。
 
-visibility は private のまま。merge は人間のみ。Settings / rulesets / Actions permissions の変更、
+merge は人間のみ。Settings / rulesets / Actions permissions の変更、
 および required status checks の追加は本記録の範囲外。
 
 ## rollback

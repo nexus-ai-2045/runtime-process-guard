@@ -2,7 +2,11 @@
 
 ローカルのsubprocess、MCP server、automationを起動する前に、重複・CPU・メモリ・親子関係を確認するprivacy-firstの実行前ガードです。
 
-既定動作はread-onlyです。プロセス停止、設定変更、外部送信、telemetryは行いません。
+観測・起動判定の入口はread-onlyです。明示的に選ぶ `guarded-stdio` は子プロセスの起動と終了を管理します。設定変更、外部送信、telemetryは行いません。
+
+## 目的
+
+ローカルで subprocess / MCP / automation を起動する直前に、重複・資源圧・親子関係を匿名で判定し、危険な一括停止や秘密の保存をせずに起動可否を返す。
 
 ## できること
 
@@ -36,25 +40,11 @@ Windows、macOS、Linuxで共通の判定語彙を使います。
 
 ## クイックスタート
 
-```powershell
-python -m pip install -e .
-python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
-```
+次の URL を AI に貼り、先に危険レビューを出させてください。削除・GitHub write・visibility・secret・unknown を安全と読まないこと。
 
-JSONが必要な場合：
+https://github.com/nexus-ai-2045/runtime-process-guard
 
-```powershell
-python -m runtime_process_guard.cli preflight --json -- node server.mjs --stdio
-```
-
-editable install前に直接試す場合：
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
-```
-
-`preflight`は対象プロセスを起動しません。呼び出し側が判定結果を確認してから起動してください。
+貼付後の確認例（人が叩く手順ではない）: `python -m runtime_process_guard.cli preflight -- node server.mjs --stdio`。`preflight` は対象を起動しません。
 
 ## 判定と終了コード
 
@@ -67,6 +57,10 @@ python -m runtime_process_guard.cli preflight -- node server.mjs --stdio
 | `40` | `unknown` | 安全に判定できないため停止する |
 
 stdio MCPはclientごとに専用pipeを持つため、既存processへ単純にreuseできません。`--reuse-policy dedicated-stdio`では、同一identityを観測してもreuseせず、resource pressureだけで`allow` / `defer`を判断します。
+
+singleton判定では、コマンドを読み取れないprocessがあれば `unknown` を返します。
+`dedicated-stdio` は他processを再利用しないため、その欠落を件数として伝えつつ資源予算を判定します。
+process一覧や資源計測そのものに失敗した場合は、どちらも `unknown` です。
 
 ## 主なコマンド
 
@@ -81,6 +75,11 @@ python -m runtime_process_guard.cli preflight --reuse-policy dedicated-stdio -- 
 ```powershell
 python -m runtime_process_guard.cli shadow-snapshot --owner codex.exe --process-name node.exe --json
 ```
+
+対象候補の属性・親子関係を確認できない場合は、不完全な観測として終了コード `40`、
+`overall=unknown`、`complete=false`、`next_action=repair-observation` を返します。
+観測できた件数は残しますが、processが存在しない証拠やpilotの成功回数には使いません。
+`feedback-cycle` もその観測では前回の正常stateを上書きしません。
 
 ### 前回との差分と傾向
 
@@ -116,8 +115,11 @@ PIDだけでなく作成時刻も比較するため、PID再利用を新規・�
 
 ## guarded stdio（限定pilot用）
 
-guard自身が起動したstdio serverだけをWindows Job Objectで所有する入口です。既定はshadowで、
-stdin EOF時の通常終了は管理しますが、idle timeoutによる終了は行いません。
+guard自身が起動したstdio serverだけをWindows Job Objectで所有する、承認後の限定pilot用入口です。
+既存CLIとの互換性のためmode名は `shadow` を維持していますが、読み取り専用ではありません。
+起動前admissionで資源不足・観測失敗時の起動を抑止し、leaseを保存し、子を起動します。
+stdin EOF、relay終了、guardの中断時には通常終了を待ち、猶予超過や子孫残存時には所有Jobを終了して消滅を検証します。
+`shadow` が無効にするのはidle timeoutによる終了です。観測のみには `shadow-snapshot` を使います。
 
 ```powershell
 runtime-process-guard guarded-stdio --mode shadow --lease-state <state-path> --idle-seconds 600 --grace-seconds 30 -- <executable> <args...>
@@ -192,4 +194,4 @@ git diff --check
 
 ## Repository visibility
 
-このrepositoryはprivate運用を前提とします。ライセンスはAll rights reservedです。push、Pull Request、merge、visibility変更、公開はそれぞれ別の承認境界です。
+このrepositoryは public（MIT）です。push、Pull Request、merge、Release 作成はそれぞれ別の承認境界です。

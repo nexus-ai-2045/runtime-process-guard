@@ -17,14 +17,16 @@ Codex Desktopのthread／MCP manager世代更新に伴い、stdio MCPの子proce
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`を設定する。stdin EOFまたは明示されたidle policyにより子stdinを閉じ、grace期間を待ち、
 残存時だけmanaged Jobを終了する。既存PIDの後付け採用、一般Node、名前一致、Codex app-rootの停止は扱わない。
 
-既定modeはshadowとし、idle終了は無効にする。enforceはactive JSON-RPC request追跡が未接続の間はfail-closedで拒否する。
+既定modeはshadowとし、idle終了は無効にする。ここでshadowは既存CLIの互換名であり、読み取り専用を意味しない。
+admissionによる起動抑止、lease保存、所有した子の起動・終了・消滅確認は有効とする。観測のみの入口は `shadow-snapshot`。
+enforceはactive JSON-RPC request追跡が未接続の間はfail-closedで拒否する。
 request追跡の実装、Obsidian 1種類の受入証拠、人間レビューをすべて満たした後の別操作とする。
 
 ## 不変条件と検知
 
 - commandはshell文字列ではなくargvとして直接起動する。
 - receiptへargv、絶対path、MCP本文、環境変数を保存しない。
-- Job割当失敗時は子を残さず、起動失敗として返す。
+- Job割当失敗時は起動を失敗とし、期限付きcleanupを試みる。子の消滅を証明できなければleaseを保持し、unknownを返す。
 - admissionの`allow`前、またはleaseのatomic登録前にはprocessを起動しない。
 - registry破損、lock競合、postflight不明では新規起動・自動回収をfail-closedとし、既存stateを自動修復しない。
 - active接続中のheartbeat失敗は即時停止理由にせず、owner生存中の期限切れleaseを回収不可として保持し、終了時結果をunknownにする。

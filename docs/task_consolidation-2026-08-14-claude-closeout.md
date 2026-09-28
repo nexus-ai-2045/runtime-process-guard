@@ -1,7 +1,7 @@
 # Claude 側管制チャットの closeout（2026-08-14）
 
 [`THREAD_CONSOLIDATION_PROTOCOL.md`](THREAD_CONSOLIDATION_PROTOCOL.md) 手順 5〜7 の実行記録。
-[`task-consolidation-2026-08-12-claude.md`](task-consolidation-2026-08-12-claude.md) の後続（次の日付の記録）。
+[`task_consolidation-2026-08-12-claude.md`](task_consolidation-2026-08-12-claude.md) の後続（次の日付の記録）。
 
 ## 決定: 管制の一本化（CEO 承認 2026-08-14）
 
