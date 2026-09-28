@@ -27,13 +27,25 @@ def observe(
             if process.pid == os.getpid():
                 continue
             try:
-                cmdline = process.info.get("cmdline") or []
+                info = process.info
+                if not isinstance(info, dict) or "cmdline" not in info:
+                    inaccessible += 1
+                    continue
+                cmdline = info["cmdline"]
+                if cmdline is None or isinstance(cmdline, (str, bytes)):
+                    inaccessible += 1
+                    continue
+                if not isinstance(cmdline, Sequence) or not all(
+                    isinstance(argument, str) for argument in cmdline
+                ):
+                    inaccessible += 1
+                    continue
                 if cmdline and command_identity(cmdline) == identity:
                     duplicate_pids.append(process.pid)
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 inaccessible += 1
             except (ValueError, TypeError):
-                continue
+                inaccessible += 1
     except (OSError, psutil.Error):
         errors.append("process-enumeration-failed")
 

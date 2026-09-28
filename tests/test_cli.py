@@ -237,6 +237,85 @@ def test_lineage_cli_marks_incomplete_observation_unknown(
     assert output["complete"] is False
 
 
+def test_shadow_cli_propagates_incomplete_observation(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "collect_shadow_snapshot",
+        lambda *args, **kwargs: {
+            "schema_version": "runtime-process-guard/shadow-v1",
+            "owner": "codex.exe",
+            "process_name": "any",
+            "read_only": True,
+            "process_count": 0,
+            "generation_count_lower_bound": 0,
+            "inaccessible_processes": 1,
+            "generations": [],
+            "observation_complete": False,
+        },
+    )
+    report_path = tmp_path / "shadow.json"
+
+    exit_code = cli.main(
+        [
+            "shadow-snapshot",
+            "--owner",
+            "codex.exe",
+            "--report-path",
+            str(report_path),
+        ]
+    )
+    output = capsys.readouterr().out
+    saved = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 40
+    assert "verified: false" in output
+    assert "next_action: repair-observation" in output
+    assert saved["overall"] == "unknown"
+    assert saved["complete"] is False
+    assert saved["next_action"] == "repair-observation"
+
+
+def test_shadow_cli_complete_json_is_verified_and_saved_consistently(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "collect_shadow_snapshot",
+        lambda *args, **kwargs: {
+            "schema_version": "runtime-process-guard/shadow-v1",
+            "owner": "codex.exe",
+            "process_name": "any",
+            "read_only": True,
+            "process_count": 2,
+            "generation_count_lower_bound": 1,
+            "inaccessible_processes": 0,
+            "generations": [],
+            "observation_complete": True,
+        },
+    )
+    report_path = tmp_path / "shadow.json"
+
+    exit_code = cli.main(
+        [
+            "shadow-snapshot",
+            "--owner",
+            "codex.exe",
+            "--report-path",
+            str(report_path),
+            "--json",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert output["overall"] == saved["overall"] == "ok"
+    assert output["complete"] is saved["complete"] is True
+    assert output["next_action"] == saved["next_action"] == "human-review-generation-pressure"
+
+
 def test_feedback_cycle_reports_stale_lock_without_removing_it(
     monkeypatch, tmp_path, capsys
 ) -> None:
@@ -366,3 +445,48 @@ def test_feedback_cycle_returns_unknown_when_observation_is_incomplete(
     assert output["trend"] == "unknown"
     assert output["next_action"] == "repair-observation"
     assert not state_path.exists()
+
+
+def test_feedback_cycle_does_not_overwrite_existing_state_on_incomplete_observation(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    state_path = tmp_path / "feedback-state.json"
+    original = {
+        "schema_version": "runtime-process-guard/feedback-v1",
+        "updated_at": "2026-09-12T00:00:00+00:00",
+        "snapshot": {
+            "schema_version": "runtime-process-guard/shadow-v1",
+            "owner": "codex.exe",
+            "process_name": "any",
+            "process_count": 2,
+            "generation_count_lower_bound": 1,
+            "inaccessible_processes": 0,
+        },
+        "consecutive_growth_cycles": 1,
+    }
+    state_path.write_text(json.dumps(original), encoding="utf-8")
+    monkeypatch.setattr(
+        cli,
+        "collect_shadow_snapshot",
+        lambda *args, **kwargs: {
+            **original["snapshot"],
+            "process_count": 3,
+            "inaccessible_processes": 1,
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "feedback-cycle",
+            "--owner",
+            "codex.exe",
+            "--state-path",
+            str(state_path),
+            "--json",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 40
+    assert output["next_action"] == "repair-observation"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == original

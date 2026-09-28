@@ -300,6 +300,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if complete else EXIT_CODES["unknown"]
     if args.action == "shadow-snapshot":
         report = collect_shadow_snapshot(args.owner, process_name=args.process_name)
+        complete = report.get("observation_complete") is True and report.get(
+            "inaccessible_processes", 0
+        ) == 0
+        report["overall"] = "ok" if complete else "unknown"
+        report["complete"] = complete
+        report["next_action"] = (
+            "human-review-generation-pressure" if complete else "repair-observation"
+        )
         if args.report_path:
             _write_report(args.report_path, report)
         if args.json:
@@ -312,15 +320,15 @@ def main(argv: list[str] | None = None) -> int:
                         f"target: {report['owner']}",
                         "dry_run: true",
                         "changed: false",
-                        "verified: true",
+                        f"verified: {str(complete).lower()}",
                         f"process_count: {report['process_count']}",
                         f"generation_count_lower_bound: {report['generation_count_lower_bound']}",
                         f"report_path: {args.report_path or 'none'}",
-                        "next_action: human-review-generation-pressure",
+                        f"next_action: {report['next_action']}",
                     )
                 )
             )
-        return 0
+        return 0 if complete else EXIT_CODES["unknown"]
 
     command = list(args.command)
     if command and command[0] == "--":

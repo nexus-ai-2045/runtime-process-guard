@@ -58,7 +58,8 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 ## success_condition
 
 - 対象MCPの起動要求数、unique identity数、重複候補数が匿名集計される。
-- shadow modeは対象processを停止・抑止しない。
+- `shadow-snapshot` は観測のみで、対象processを停止・抑止しない。不完全観測は成功した受入証拠として扱わない。
+- `guarded-stdio --mode shadow` は管理付き起動であり、admissionによる起動抑止、lease保存、所有Jobの終了後検証を行う。idle終了は無効。実runtimeへの接続には別途pilotの人間レビューを必要とする。
 - privacy testと回帰testが成功する。
 - block modeへ進めるかを、人間が判断できる証拠が揃う。
 
@@ -73,4 +74,28 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 
 ## next_action
 
-次はPR #7のCIが実行可能になった後、同一HEADを確認してmerge判断へ戻す。その後、Obsidian 1種類だけのshadow pilot設定を人間reviewし、再起動前後のlineageと負荷を再測定する。process停止、Codex再起動、enforce、block／kill、Scheduled Task変更への昇格は別承認とする。
+PR #7は2026-09-12、設計PR #9は2026-09-16にマージ済み。次は、既定branch `5fedc312` に未反映だった
+観測欠落の修正を後続PRでレビューする。マージ済みPR #7のbranchへ追記しない。
+その後、Obsidian 1種類だけの管理付き起動pilot設定を人間reviewし、再起動前後のlineageと負荷を再測定する。
+process停止、Codex再起動、enforce、block／kill、Scheduled Task変更への昇格は別承認とする。
+
+## 2026-09-20: 観測欠落修正の検証と残務
+
+- scope: collector・shadow観測・CLI・既存feedbackへの欠落伝達。別repoへの移管やruntime設定は対象外。
+- 根因: psutilが読取不能な属性を既定の `None` に変換するため、空のコマンドと区別しない実装では欠落を見落としていた。
+- 修正: 欠落・不正型・親探索の打切り・範囲外時刻を不完全観測へ分類し、shadow CLIは終了コード40を返す。正常なfeedback stateを不完全観測で上書きしない。
+- 回帰テスト: 欠落、正常な空コマンド、専用stdio、資源不足、非有限・範囲外時刻、JSONと保存reportの一致、feedback state保持。
+- 本線の全体試験: Windows / Python 3.13で `133 passed, 4 skipped, 1 failed`。失敗は既存の `test_windows_shadow_round_trip_and_eof_cleanup` の10秒timeout。単独再実行でも再現した。
+- 比較: admission・collector・CLI・guarded launcher・Windows Job・lease registry・postflight・該当testが `origin/baseline` と一致する別checkoutでも同じtimeoutを再現。今回差分だけの回帰とは認められないが、原因確定・実runtime受入の証拠でもない。
+- `compileall` と `git diff --check` は成功。独立コードレビューでは今回差分のP1/P2所見なし。
+- 読取専用の実機shadowスモーク（2026-09-20 02:00 JST）は、観測195件・読取不能1件に対して `complete=false` / `overall=unknown` / 終了コード40を確認。所要96.63秒であり、観測処理の実機性能は未保証。
+
+再実行はrepo rootで `python -m pytest -q --basetemp=<この実行専用の一時ディレクトリ>`。
+結果は対象HEADに結び付け、過去の合格や未起動CIで置き換えない。
+
+| 残務 | owner | 次の行動と完了条件 |
+|---|---|---|
+| Windows実プロセス試験のtimeout | 実装担当 | CIと同一HEADの結果を回収し、環境条件と起動・観測・終了のどこで遅延するか特定。期限を緩めるだけで合格にしない |
+| 後続PRの受入 | 実装担当＋人間 | 同一HEADのCI・レビュー・差分を確認し、merge直前に判断する |
+| 実runtimeの長期pilot | 運用担当＋人間 | 対象1種類と具体的設定差分をレビュー後、既存の期間・回数・保護対象条件を実測する |
+| 旧checkoutの未コミット差分 | この実装タスク | 後続PRとの同等性を確認してから整理候補を提示。既存WIPやworktreeを自動削除しない |
