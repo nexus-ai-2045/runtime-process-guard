@@ -23,17 +23,17 @@ transportのcommand/argsだけをguard経由へ置換し、元のserver argv/env
 
 1. 対象の実効起動経路がdirect stdioであることを確認。Plugin定義commandの置換は行わない。
 2. Desktopの接続ownerを一次証拠で確定する。直近shellや近いCodex祖先という理由だけでPIDを選ばない。
-3. 静的設定に特定PIDを恒久埋込みしない。再起動・別接続でownerが変わる場合は利用元adapterが毎回渡す必要がある。公式接続点で渡せない場合はpilotを止め、EOFだけでowner監視受入済みと扱わない。
+3. 静的設定に特定PIDを恒久埋込みしない。再起動・別接続でownerが変わる場合は利用元adapterが毎回渡す必要がある。owner監視付きpilotでは確定不能時に停止。利用者が選択したObsidian一種類のEOF＋Job限定試験ではclient owner引数を省略し、owner監視済みと扱わない（ADR-0004追記）。
 4. 旧launcherが新stateへ書き込まず、すべての管理対象が共通のstateと2/4予算を使用することを確認。
 5. 具体的な対象バージョン、設定差分、保護対象、復帰手順を人間レビューする。実設定適用・再起動・既存process回収は別操作。
 
 ## 受入と計測
 
-最初は同時1接続で5回smoke。その後2接続を同時に使い、片方の終了が他方へ影響しないことと、同種3本目・合計5本目の新起動が拒否されることを確認する。
+最初は同時1接続で5回smoke。その後Desktopで同種2接続を同時に使い、片方の終了が他方へ影響しないことと、同種3本目の新起動が拒否されることを確認する。管理対象全体5本目の拒否は、異なるserver identityを共有registryへ参加させる独立の統合試験で検証する。Obsidian一種類だけのDesktop試験で全体上限を実証したとは扱わない。
 拒否は待機queueではなく終了コード20であり、guardは自動retryしない。クライアント側のretryが増殖する場合はpilot不合格。
 本受入は30回の有限反復とレビュー済み再起動前後。起動要求数・実起動数・接続数・owned Job残留・外部子孫観測・lease残留・終了時間・guard込みメモリ/handle数を比較する。
 長い呼出しの通信空白で切断しないこと、shimの直接子が先に終了しても孫の応答が成功することも確認する。
-未知owner、registry破損、Job割当て失敗、観測欠落、Job内外の食い違いはunknownとして停止。閾値を緩めるだけで合格にしない。
+明示client ownerを使う経路では、その観測不能をunknownとして停止。利用者が選んだObsidian一種類のEOF限定試験ではclient owner引数を意図的に省略し、owner監視の保証を付けない。いずれの経路でもlease/Job ownerの観測不能、registry破損、Job割当て失敗、Job内外の食い違いはunknownとして停止する。閾値を緩めるだけで合格にしない。
 
 ## 小さい改善・大きい改善
 
