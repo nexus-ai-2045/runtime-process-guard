@@ -175,6 +175,14 @@ python scripts/reconcile_codex_plugin_windows.py `
 
 原本のdurableな複製は既定で作りません。manifestにはraw command lineや`env`が含まれ得るためです。人手の復旧用に控えが必要な場合だけ`--backup`を明示すると、同じディレクトリへ`<name>.pre-headless.bak`を作ります。
 
+## 必要時起動と接続上限
+
+接続単位の必要時起動・終了後回収を行う限定経路は、既存の `guarded-stdio` を使用します。
+`--max-server-instances 2 --max-total-instances 4` を明示すると、共通lease registryのロック内で起動枠を予約します。
+上限に達した場合は新起動だけを終了コード20で拒否し、既存接続を保持します。無指定の旧CLIは従来互換であり、自動的に2/4上限が適用されるわけではありません。
+最初のtool callまでの遅延起動、通信空白によるidle停止、既存PIDの回収は行いません。
+実runtime適用前に [限定pilotの契約](docs/MCP_LIFECYCLE_PILOT.md) を確認してください。
+
 ## 開発と検証
 
 ```powershell

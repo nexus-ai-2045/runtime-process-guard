@@ -1,7 +1,107 @@
 import json
+from datetime import datetime, timezone
+
+import pytest
 
 from runtime_process_guard import cli
 from runtime_process_guard.admission import Observation
+
+
+def test_guarded_cli_passes_capacity_and_exact_owner_without_launch(
+    monkeypatch, tmp_path
+):
+    received = []
+    monkeypatch.setattr(
+        cli, "run_guarded_stdio", lambda options: received.append(options) or 20
+    )
+    result = cli.main(
+        [
+            "guarded-stdio",
+            "--lease-state",
+            str(tmp_path / "leases.json"),
+            "--max-server-instances",
+            "2",
+            "--max-total-instances",
+            "4",
+            "--client-owner-pid",
+            "123",
+            "--client-owner-created-at",
+            "2026-10-02T01:00:00Z",
+            "--",
+            "node",
+            "server.mjs",
+        ]
+    )
+    assert result == 20
+    assert received[0].max_server_instances == 2
+    assert received[0].max_total_instances == 4
+    assert received[0].client_owner_pid == 123
+    assert received[0].client_owner_created_at == datetime(
+        2026, 10, 2, 1, tzinfo=timezone.utc
+    )
+    assert not (tmp_path / "leases.json").exists()
+
+
+def test_guarded_cli_reports_launch_failure_without_sensitive_exception(
+    monkeypatch, tmp_path, capsys
+):
+    def failed(_options):
+        raise OSError("private-command-path secret-value")
+
+    monkeypatch.setattr(cli, "run_guarded_stdio", failed)
+    assert (
+        cli.main(
+            [
+                "guarded-stdio",
+                "--lease-state",
+                str(tmp_path / "leases.json"),
+                "--",
+                "node",
+            ]
+        )
+        == 40
+    )
+    output = capsys.readouterr()
+    assert json.loads(output.err)["overall"] == "unknown"
+    assert "private-command-path" not in output.err
+    assert "secret-value" not in output.err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--max-server-instances", "2"],
+        ["--max-server-instances", "0", "--max-total-instances", "4"],
+        ["--max-server-instances", "5", "--max-total-instances", "4"],
+        ["--client-owner-pid", "123"],
+        ["--client-owner-created-at", "2026-10-02T01:00:00Z"],
+        [
+            "--client-owner-pid",
+            "123",
+            "--client-owner-created-at",
+            "2026-10-02T01:00:00",
+        ],
+    ],
+)
+def test_guarded_cli_rejects_invalid_capacity_or_owner_before_launch(
+    monkeypatch, tmp_path, extra
+):
+    monkeypatch.setattr(
+        cli, "run_guarded_stdio", lambda _: pytest.fail("must not launch")
+    )
+    with pytest.raises(SystemExit) as failure:
+        cli.main(
+            [
+                "guarded-stdio",
+                "--lease-state",
+                str(tmp_path / "leases.json"),
+                *extra,
+                "--",
+                "node",
+            ]
+        )
+    assert failure.value.code == 2
+    assert not (tmp_path / "leases.json").exists()
 
 
 def test_cli_emits_redacted_machine_readable_result(monkeypatch, capsys) -> None:
@@ -313,7 +413,11 @@ def test_shadow_cli_complete_json_is_verified_and_saved_consistently(
     assert exit_code == 0
     assert output["overall"] == saved["overall"] == "ok"
     assert output["complete"] is saved["complete"] is True
-    assert output["next_action"] == saved["next_action"] == "human-review-generation-pressure"
+    assert (
+        output["next_action"]
+        == saved["next_action"]
+        == "human-review-generation-pressure"
+    )
 
 
 def test_feedback_cycle_reports_stale_lock_without_removing_it(

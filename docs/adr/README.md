@@ -6,3 +6,4 @@
 | ADR | 状態 | 判断 |
 |---|---|---|
 | [ADR-0001](ADR-0001-runtime-owned-stdio-lifecycle.md) | Accepted for shadow pilot | guard起動processだけをJob Objectで所有する |
+| [ADR-0003](ADR-0003-bounded-connection-lifecycle.md) | ローカル実装採用・runtime受入待ち | 接続単位の必要時起動、同種2・全体4の起動上限 |

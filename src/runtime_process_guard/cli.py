@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import platform
+import subprocess
+import sys
 import tempfile
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -26,6 +28,18 @@ from .shadow import collect_shadow_snapshot
 from .guarded_stdio import GuardMode, run_guarded_stdio, validate_guard_options
 
 EXIT_CODES = {"allow": 0, "reuse": 10, "defer": 20, "deny": 30, "unknown": 40}
+
+
+def _owner_creation_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "owner creation time must be timezone-aware ISO 8601"
+        ) from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,6 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     guarded.add_argument("--lease-ttl-seconds", type=float, default=30.0)
     guarded.add_argument("--min-available-memory-mb", type=int, default=2048)
     guarded.add_argument("--max-cpu-percent", type=float, default=90.0)
+    guarded.add_argument("--max-server-instances", type=int)
+    guarded.add_argument("--max-total-instances", type=int)
+    guarded.add_argument("--client-owner-pid", type=int)
+    guarded.add_argument("--client-owner-created-at", type=_owner_creation_time)
     guarded.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
@@ -167,10 +185,22 @@ def main(argv: list[str] | None = None) -> int:
                 lease_ttl_seconds=args.lease_ttl_seconds,
                 min_available_memory_mb=args.min_available_memory_mb,
                 max_cpu_percent=args.max_cpu_percent,
+                max_server_instances=args.max_server_instances,
+                max_total_instances=args.max_total_instances,
+                client_owner_pid=args.client_owner_pid,
+                client_owner_created_at=args.client_owner_created_at,
             )
         except (TypeError, ValueError) as exc:
             build_parser().error(str(exc))
-        return run_guarded_stdio(options)
+        try:
+            return run_guarded_stdio(options)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            # Do not expose argv, state paths or exception text in a traceback.
+            print(
+                json.dumps({"event": "guarded-launch-unknown", "overall": "unknown"}),
+                file=sys.stderr,
+            )
+            return EXIT_CODES["unknown"]
     if args.action == "feedback-cycle":
         lock = _try_acquire_feedback_lock(args.state_path)
         if lock is None:
@@ -247,9 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if not args.previous_report.exists():
                     raise FileNotFoundError(args.previous_report)
-                previous = json.loads(
-                    args.previous_report.read_text(encoding="utf-8")
-                )
+                previous = json.loads(args.previous_report.read_text(encoding="utf-8"))
                 if not _valid_lineage_report(previous):
                     raise ValueError("previous lineage report has an invalid schema")
             except (OSError, json.JSONDecodeError, ValueError, TypeError):
@@ -300,9 +328,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if complete else EXIT_CODES["unknown"]
     if args.action == "shadow-snapshot":
         report = collect_shadow_snapshot(args.owner, process_name=args.process_name)
-        complete = report.get("observation_complete") is True and report.get(
-            "inaccessible_processes", 0
-        ) == 0
+        complete = (
+            report.get("observation_complete") is True
+            and report.get("inaccessible_processes", 0) == 0
+        )
         report["overall"] = "ok" if complete else "unknown"
         report["complete"] = complete
         report["next_action"] = (
