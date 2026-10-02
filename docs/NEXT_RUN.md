@@ -2,10 +2,10 @@
 
 ## 状態
 
-- status: local-owned-lifecycle-complete-awaiting-pilot-review
+- status: code-pr-reviewing-runtime-pilot-deferred
 - owner: codex（このタスクの再開先）
 - recorded_at: 2026-08-19T00:00:00+09:00
-- last_verified_at: 2026-08-29T13:00:00+09:00
+- last_verified_at: 2026-10-02T22:36:00+09:00
 - project: `runtime-process-guard`
 - canonical_repo: `Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
 - scope: Codex配下のMCP起動経路を1経路だけ選び、pre-launch admission、runtime-owned lease、guarded launcherの限定pilotに接続する
@@ -42,8 +42,8 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 6. [完了] lease registryを実process観測と永続registryへ接続する。
 7. [完了] PR #7でテスト用guarded launcherとWindows Job Object adapterを実装し、Windows実processを使うshadow round-trip testを追加する。
 8. [完了] graceful shutdown、timeout、Job close、起動前admission、runtime lease、同じowned Jobを照合するpostflightをlocal testする。
-9. [待機] `HUMAN_REVIEW.md` にpilot証拠を追記し、1種類のMCPでのruntime操作の承認を得る。
-10. [待機] 承認後のpilotと再起動後受入を実施する。
+9. [完了] `docs/MCP_LIFECYCLE_PILOT.md` と ADR-0003/0004 に限定試験、owner証拠ゲート、復帰条件を記録する。
+10. [延期] PR #19のコード統合と実runtime採用を分離する。Obsidian設定の適用は利用者が後日に再開を選ぶまで行わない。
 
 ## evidence_path
 
@@ -74,10 +74,18 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 
 ## next_action
 
-PR #7は2026-09-12、設計PR #9は2026-09-16にマージ済み。次は、既定branch `5fedc312` に未反映だった
-観測欠落の修正を後続PRでレビューする。マージ済みPR #7のbranchへ追記しない。
-その後、Obsidian 1種類だけの管理付き起動pilot設定を人間reviewし、再起動前後のlineageと負荷を再測定する。
-process停止、Codex再起動、enforce、block／kill、Scheduled Task変更への昇格は別承認とする。
+PR #7、#9、#10はマージ済み。PR #19で接続上限、所有Jobの終了管理、stdio owner診断をレビューする。
+コード統合後もDesktopへのguard配線は行わない。再開時はdirect stdioの最新baseline、接続ごとのowner証拠またはEOF境界、
+ローカルでのguard追加コストを確認して設定差分と復帰方法をレビューする。Desktopでの起動時間・メモリ・handle・残留Jobと改善効果は、限定適用後に判定する。
+process停止、Codex再起動、設定変更、enforce、block／kill、Scheduled Task変更への昇格は別承認とする。
+
+## 2026-10-02: PR #19とruntime採用の分離
+
+- ローカルstdio比較は直起動・guard経由とも30/30成功し、guard終了後のlease残留は0件だった。
+- guard経由は局所比較で起動時間・process数・メモリ・handle数が増えたため、負荷削減効果は未証明である。
+- Desktopの継承stdio probeは共通長寿命peerまでしか示さず、接続ごとのowner証明にはならなかった。
+- 実Desktop設定、既存process、plugin cacheは変更せず、コードPRの統合だけを先に判定する。
+- owner観測が途中でunknownになった場合もgraceful shutdownへ入るfail-closed回帰を追加した。
 
 ## 2026-09-20: 観測欠落修正の検証と残務
 
