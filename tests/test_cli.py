@@ -7,6 +7,30 @@ from runtime_process_guard import cli
 from runtime_process_guard.admission import Observation
 
 
+def test_stdio_probe_cli_does_not_upgrade_observation_to_ownership(monkeypatch, capsys):
+    from runtime_process_guard import stdio_probe
+
+    monkeypatch.setattr(
+        stdio_probe,
+        "collect_stdio_probe",
+        lambda: {"probe_status": "collected", "ownership_status": "unknown"},
+    )
+    assert cli.main(["probe-stdio-owner"]) == 0
+    assert json.loads(capsys.readouterr().out)["ownership_status"] == "unknown"
+
+
+def test_stdio_probe_cli_unknown_is_40(monkeypatch, capsys):
+    from runtime_process_guard import stdio_probe
+
+    monkeypatch.setattr(
+        stdio_probe,
+        "collect_stdio_probe",
+        lambda: {"probe_status": "unknown", "ownership_status": "unknown"},
+    )
+    assert cli.main(["probe-stdio-owner"]) == 40
+    assert json.loads(capsys.readouterr().out)["probe_status"] == "unknown"
+
+
 def test_guarded_cli_passes_capacity_and_exact_owner_without_launch(
     monkeypatch, tmp_path
 ):

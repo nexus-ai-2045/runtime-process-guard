@@ -45,6 +45,10 @@ def _owner_creation_time(value: str) -> datetime:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="runtime-process-guard")
     subparsers = parser.add_subparsers(dest="action", required=True)
+    probe = subparsers.add_parser("probe-stdio-owner")
+    probe.add_argument(
+        "--mcp", action="store_true", help="serve read-only stdio probe as MCP"
+    )
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument(
         "--json", action="store_true", help="emit machine-readable JSON"
@@ -171,6 +175,14 @@ def _valid_lineage_report(report: object) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.action == "probe-stdio-owner":
+        from .stdio_probe import collect_stdio_probe, run_probe_mcp
+
+        if args.mcp:
+            return run_probe_mcp()
+        report = collect_stdio_probe()
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        return 0 if report.get("probe_status") == "collected" else EXIT_CODES["unknown"]
     if args.action == "guarded-stdio":
         command = list(args.command)
         if command and command[0] == "--":
