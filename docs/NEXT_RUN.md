@@ -43,7 +43,7 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 7. [完了] PR #7でテスト用guarded launcherとWindows Job Object adapterを実装し、Windows実processを使うshadow round-trip testを追加する。
 8. [完了] graceful shutdown、timeout、Job close、起動前admission、runtime lease、同じowned Jobを照合するpostflightをlocal testする。
 9. [完了] `docs/MCP_LIFECYCLE_PILOT.md` と ADR-0003/0004 に限定試験、owner証拠ゲート、復帰条件を記録する。
-10. [延期] PR #19のコード統合と実runtime採用を分離し、Desktop owner証明と負荷改善が実測できるまで設定適用を行わない。
+10. [延期] PR #19のコード統合と実runtime採用を分離する。Obsidian設定の適用は利用者が後日に再開を選ぶまで行わない。
 
 ## evidence_path
 
@@ -75,8 +75,8 @@ PCまたはCodexアプリの再起動後、このrepositoryを開いて本書を
 ## next_action
 
 PR #7、#9、#10はマージ済み。PR #19で接続上限、所有Jobの終了管理、stdio owner診断をレビューする。
-コード統合後もDesktopへのguard配線は行わない。再開時はdirect stdioの最新baseline、接続ごとのowner証拠、
-guard込みの起動時間・メモリ・handle・残留Jobを再測定し、改善が確認できる場合だけ設定差分をレビューする。
+コード統合後もDesktopへのguard配線は行わない。再開時はdirect stdioの最新baseline、接続ごとのowner証拠またはEOF境界、
+ローカルでのguard追加コストを確認して設定差分と復帰方法をレビューする。Desktopでの起動時間・メモリ・handle・残留Jobと改善効果は、限定適用後に判定する。
 process停止、Codex再起動、設定変更、enforce、block／kill、Scheduled Task変更への昇格は別承認とする。
 
 ## 2026-10-02: PR #19とruntime採用の分離
