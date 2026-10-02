@@ -327,6 +327,20 @@ def test_client_owner_pid_reuse_is_ended(monkeypatch):
     )
 
 
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ("alive", None),
+        ("ended", "client-owner-ended"),
+        ("unknown", "client-owner-unknown"),
+    ],
+)
+def test_client_owner_unknown_starts_fail_closed_shutdown(status, expected):
+    from runtime_process_guard.guarded_stdio import _client_owner_shutdown_reason
+
+    assert _client_owner_shutdown_reason(status) == expected
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object integration")
 def test_windows_exited_shim_keeps_grandchild_relay_alive(tmp_path):
     repo = Path(__file__).resolve().parents[1]

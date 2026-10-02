@@ -221,6 +221,15 @@ def _client_owner_status(pid: int, created_at: datetime) -> str:
         return "unknown"
 
 
+def _client_owner_shutdown_reason(status: str) -> str | None:
+    """Fail closed when an explicitly tracked client owner cannot be trusted."""
+    if status == "alive":
+        return None
+    if status == "ended":
+        return "client-owner-ended"
+    return "client-owner-unknown"
+
+
 def _heartbeat_with_retry(
     registry: LeaseRegistry, lease: LeaseRecord, ttl: float
 ) -> LeaseRecord:
@@ -431,10 +440,11 @@ def run_guarded_stdio(options: GuardOptions) -> int:
                 owner_status = _client_owner_status(
                     options.client_owner_pid, options.client_owner_created_at
                 )
-                if owner_status == "ended":
+                owner_reason = _client_owner_shutdown_reason(owner_status)
+                if owner_reason is not None:
                     should_close = True
-                    reason = "client-owner-ended"
-                elif owner_status == "unknown":
+                    reason = owner_reason
+                if owner_status == "unknown":
                     if not client_owner_unknown:
                         _receipt("client-owner-unknown", phase="monitor")
                     client_owner_unknown = True
