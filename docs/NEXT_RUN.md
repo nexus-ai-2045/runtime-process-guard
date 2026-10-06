@@ -2,10 +2,10 @@
 
 ## 状態
 
-- status: code-pr-reviewing-runtime-pilot-deferred
+- status: runtime-pilot-human-review-blocked-current-pressure
 - owner: codex（このタスクの再開先）
 - recorded_at: 2026-08-19T00:00:00+09:00
-- last_verified_at: 2026-10-02T22:36:00+09:00
+- last_verified_at: 2026-10-06T16:43:46+09:00
 - project: `runtime-process-guard`
 - canonical_repo: `Projects/Documents/.repos/nexus_ai/private/runtime-process-guard`
 - scope: Codex配下のMCP起動経路を1経路だけ選び、pre-launch admission、runtime-owned lease、guarded launcherの限定pilotに接続する
@@ -86,6 +86,21 @@ process停止、Codex再起動、設定変更、enforce、block／kill、Schedul
 - Desktopの継承stdio probeは共通長寿命peerまでしか示さず、接続ごとのowner証明にはならなかった。
 - 実Desktop設定、既存process、plugin cacheは変更せず、コードPRの統合だけを先に判定する。
 - owner観測が途中でunknownになった場合もgraceful shutdownへ入るfail-closed回帰を追加した。
+
+## 2026-10-06: 最新runtime再測定とpilot判定
+
+- read-only smokeはMCP server 26件・約1.67GBを`heavy`と判定した。Nodeは125件、同一identityの世代下限は13だった。
+- 5秒計測はCPU 100%、Processor Queue Length 66〜151、利用可能メモリ約1.2〜1.7GBを示した。計測中はTask Manager自身の負荷も含まれるため、単一processを原因と断定しない。
+- 39.17日間のshadowは9,943観測、unknown 58、heavy 5,547で、自動昇格せず`human-review-required`を維持した。
+- PR #19の局所比較ではguard経由の起動時間・process数・メモリ・handle数が増えている。現在の高負荷状態へguardを配線しても削減効果を識別できないため、設定適用はNo-Goとする。
+- 次の機械ゲートは、作業保存後の通常Codex再起動と、同じread-only smoke／Node世代／CPU queueの再測定である。再起動、設定変更、process停止はそれぞれ人間判断とする。
+
+### pilot再開条件
+
+1. 再起動後baselineでMCP件数、世代数、CPU queue、利用可能メモリを同じ検査器で取得する。
+2. direct stdioの残留または世代蓄積が再現し、guard追加コストを上回る改善余地を示す。
+3. 接続owner証拠またはレビュー済みEOF境界、具体的設定差分、原設定hash、復帰手順を一つのreview packetへ固定する。
+4. 条件が欠ける場合はpilotを開始せず、観測結果をunknown／No-Goとして保持する。
 
 ## 2026-09-20: 観測欠落修正の検証と残務
 
