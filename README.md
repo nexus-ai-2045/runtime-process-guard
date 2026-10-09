@@ -40,6 +40,15 @@ Windows、macOS、Linuxで共通の判定語彙を使います。
 
 ## クイックスタート
 
+Python 3.11以上の独立した環境へ `python -m pip install .` で通常インストールできます。
+Projects、Codex、他repositoryのscriptはCLI実行の依存ではありません。
+インストール後はcheckout外から `runtime-process-guard --help` を実行できます。
+観測コマンドはOS共通、`guarded-stdio` の所有Job経路はWindows限定です。
+
+CIはwheelを別venvへ通常インストールし、checkout外・Python隔離モードでCLIを検査します。
+Windowsでは試験用echo子processの往復、EOF後の所有Job消滅、lease解放も確認します。
+この試験はCodex Desktopの設定配線やMCP必要時選択の受入とは別です。
+
 次の URL を AI に貼り、先に危険レビューを出させてください。削除・GitHub write・visibility・secret・unknown を安全と読まないこと。
 
 https://github.com/nexus-ai-2045/runtime-process-guard
