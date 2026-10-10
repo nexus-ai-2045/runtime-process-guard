@@ -4,6 +4,7 @@ __pycache__/
 .pytest-tmp*/
 .pytest-*/
 .venv/
+.wheel-venv/
 dist/
 build/
 *.egg-info/

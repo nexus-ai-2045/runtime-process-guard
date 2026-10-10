@@ -33,6 +33,21 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Build standalone wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist .
+
+      - name: Install wheel in isolated environment
+        shell: bash
+        run: |
+          python -m venv .wheel-venv
+          if [ -f .wheel-venv/Scripts/python.exe ]; then
+            PY=.wheel-venv/Scripts/python.exe
+          else
+            PY=.wheel-venv/bin/python
+          fi
+          "$PY" -m pip install dist/*.whl
+          python scripts/verify_installed_distribution.py --python "$PY"
+
   consistency:
     # .repo-preflight-consistency.json を宣言だけで終わらせず実行する。
     # 検査ロジックは複製せず、upstream repo-preflight を固定SHAで checkout して呼ぶ。
