@@ -14,17 +14,41 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python", required=True, type=Path)
     args = parser.parse_args()
-    executable = str(args.python.resolve())
-    results: dict[str, object] = {"cli": False, "windows_owned_job": "not-applicable"}
+    executable = str(args.python.absolute())
+    entrypoint_name = "runtime-process-guard.exe" if os.name == "nt" else "runtime-process-guard"
+    entrypoint = str(Path(executable).with_name(entrypoint_name))
+    venv_prefix = Path(executable).parent.parent.resolve()
+    results: dict[str, object] = {
+        "isolated_environment": False,
+        "cli": False,
+        "windows_owned_job": "not-applicable",
+    }
     with tempfile.TemporaryDirectory(prefix="guard-wheel-") as directory:
         base = [executable, "-I", "-m", "runtime_process_guard.cli"]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
+            prefix_result = subprocess.run(
+                [executable, "-I", "-c", "import sys; print(sys.prefix)"],
+                cwd=directory, capture_output=True, text=True,
+                timeout=30, creationflags=flags,
+            )
+            if prefix_result.returncode != 0 or Path(prefix_result.stdout.strip()).resolve() != venv_prefix:
+                raise RuntimeError("interpreter is outside the isolated environment")
+            results["isolated_environment"] = True
             help_result = subprocess.run(
                 [*base, "--help"], cwd=directory, capture_output=True,
                 timeout=30, creationflags=flags,
             )
-            if help_result.returncode != 0 or b"guarded-stdio" not in help_result.stdout:
+            entry_result = subprocess.run(
+                [entrypoint, "--help"], cwd=directory, capture_output=True,
+                timeout=30, creationflags=flags,
+            )
+            if (
+                help_result.returncode != 0
+                or b"guarded-stdio" not in help_result.stdout
+                or entry_result.returncode != 0
+                or b"guarded-stdio" not in entry_result.stdout
+            ):
                 raise RuntimeError("installed CLI unavailable")
             results["cli"] = True
             if os.name == "nt":
