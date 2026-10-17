@@ -26,6 +26,8 @@
 - 開発保証 workflow（`repository-guarantees.yml`）は **`workflow_dispatch` のみ**。`pull_request` / `push` では起動しない
 - `workflow_dispatch` で BASE と HEAD が同一（空 diff）のときは差分検査を緑にしない（fail-closed）
 - 既存の `ci.yml`（pytest + 薄い consistency）は別契約。本節の開発保証とは混ぜない
+- `ci.yml` の consistency の比較元は、PR なら base branch、push なら直前の push（無ければ直前のコミット、初回コミットは空ツリーで全ファイル）
+- repo-preflight の pin SHA は `main` に入っている commit にする。PR ブランチの SHA は squash merge と枝削除のあと clone から取れなくなる
 
 ### 手元同等の確認手順
 
@@ -37,7 +39,7 @@ python -m pip install --require-hashes -r requirements-tools.txt
 python -m ai_ratchet_gate --repo .
 
 # 2) repo-preflight（上流 clone。検査ロジックはコピーしない）
-REPO_PREFLIGHT_SHA=f825268978228a3cfb2f5ecba16a74d424134b1a
+REPO_PREFLIGHT_SHA=4fc1190c2020ec8c19a9b0c62749369e0439fbaf
 git clone --no-checkout https://github.com/nexus-ai-2045/repo-preflight.git /tmp/repo-preflight
 git -C /tmp/repo-preflight checkout --detach "$REPO_PREFLIGHT_SHA"
 test "$(git -C /tmp/repo-preflight rev-parse HEAD)" = "$REPO_PREFLIGHT_SHA"

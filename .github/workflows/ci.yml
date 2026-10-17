@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nexus-ai-2045/repo-preflight
-          ref: 8da9469710c1aab436bc621f65e907894cc30eb5
+          ref: 4fc1190c2020ec8c19a9b0c62749369e0439fbaf
           path: .tools/repo-preflight
           persist-credentials: false
 
