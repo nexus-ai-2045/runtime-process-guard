@@ -79,3 +79,7 @@ merge は人間のみ。Settings / rulesets / Actions permissions の変更、
 
 plugin cache への apply は別承認とし、異常時は receipt の `aborted` / `next_action` に従う。
 `partial-write` では自動 rollback せず、適用済み件数と対象 manifest を人間が確認する。
+
+## 公開名義の検査（2026-10-17）
+
+CI の `.github/workflows/preflight.yml` は、共通ゲート `nexus-ai-2045/repo-preflight` の `preflight-gate.yml` を SHA 固定で呼びます。このゲートは全 commit の作成者と記録者を公開名義の許可リスト（repo-preflight の `references/public-commit-identities.json`）と照合し、リストに無い名義があれば失敗します。名義の値は出力しません。
