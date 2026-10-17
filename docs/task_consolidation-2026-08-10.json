@@ -1,0 +1,44 @@
+{
+  "schema_version": "fact-provenance/v1",
+  "thread_id": "019fda3d-67d9-7a82-9d22-001d57159ef0",
+  "recorded_at": "2026-08-10T03:17:03+09:00",
+  "recorded_by": "codex",
+  "claims": [
+    {
+      "claim": "runtime-process-guardの統合先はnexus-ai-2045/runtime-process-guard private repositoryと現在のCodexタスクである",
+      "classification": "fact",
+      "source": "GitHub API repo view and Codex current thread context",
+      "actor": "Codex and GitHub",
+      "event_time": "2026-08-10",
+      "observed_at": "2026-08-10T03:17:03+09:00",
+      "scope": "runtime-process-guard consolidation"
+    },
+    {
+      "claim": "関連生ログから主要5系統、automation 13件、前史2件を抽出して機能単位で分類した",
+      "classification": "fact",
+      "source": "Codex state_5.sqlite candidate extraction and rollout JSONL direct reads",
+      "actor": "local Codex state and session logs",
+      "event_time": "2026-08-10",
+      "observed_at": "2026-08-10T03:17:03+09:00",
+      "scope": "Codex task inventory"
+    },
+    {
+      "claim": "音声タスクのCtrl+M設定はユーザー操作待ちであるためruntime統合後もarchiveしない",
+      "classification": "non_fact",
+      "non_fact_kind": "decision",
+      "basis": "runtime topicと音声UI固有残務を分離し、残務ゼロでのみarchiveするため",
+      "actor": "codex",
+      "event_time": "2026-08-10",
+      "scope": "thread routing"
+    },
+    {
+      "claim": "Codex実起動経路におけるlease、Job Object、graceful shutdown、block昇格の運用保証",
+      "classification": "unknown",
+      "unknown_reason": "現時点の変更はread-only観測と判定で、実起動経路への限定pilotを実施していない",
+      "verification_next": "別PRでpure lease schemaを実装後、1 MCP限定の人間レビュー済みpilotを行う",
+      "actor": "runtime-process-guard",
+      "event_time": "unknown",
+      "scope": "live runtime assurance"
+    }
+  ]
+}
