@@ -11,6 +11,6 @@ permissions:
   contents: read
 jobs:
   gate:
-    uses: nexus-ai-2045/repo-preflight/.github/workflows/preflight-gate.yml@93751adc49e9c63d119a18e69784d5163d939ebb # main（#89 の修正入り）
+    uses: nexus-ai-2045/repo-preflight/.github/workflows/preflight-gate.yml@22c2f4be632c726910553f2c351e4a14158c0b4a # main（#89 の修正入り）
     with:
-      preflight-ref: 93751adc49e9c63d119a18e69784d5163d939ebb
+      preflight-ref: 22c2f4be632c726910553f2c351e4a14158c0b4a
