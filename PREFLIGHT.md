@@ -6,7 +6,7 @@
 
 - repository: `nexus-ai-2045/runtime-process-guard`
 - visibility: public（MIT。Release 作成は別承認）
-- 対象branch: `baseline`
+- 対象branch: `main`
 - public化: 済 / release・外部告知: 別承認（本記録はゲート測定用）
 - 人間による最終目視とmerge判断: 未完了
 
@@ -29,7 +29,7 @@
 
 ### 手元同等の確認手順
 
-feature 枝で `origin/baseline` との差分がある状態で実行する（`BASE==HEAD` は意図的に失敗させる）。
+feature 枝で `origin/main` との差分がある状態で実行する（`BASE==HEAD` は意図的に失敗させる）。
 
 ```bash
 # 1) ai-ratchet-gate（tracked∧ignored の新規悪化だけ deny）
@@ -42,8 +42,8 @@ git clone --no-checkout https://github.com/nexus-ai-2045/repo-preflight.git /tmp
 git -C /tmp/repo-preflight checkout --detach "$REPO_PREFLIGHT_SHA"
 test "$(git -C /tmp/repo-preflight rev-parse HEAD)" = "$REPO_PREFLIGHT_SHA"
 
-git fetch origin baseline
-BASE="$(git rev-parse origin/baseline)"
+git fetch origin main
+BASE="$(git rev-parse origin/main)"
 HEAD="$(git rev-parse HEAD)"
 test "$BASE" != "$HEAD"  # 空diff fail-closed
 
@@ -51,7 +51,7 @@ python /tmp/repo-preflight/scripts/consistency_gate.py \
   --repo . --base-ref "$BASE" --require-config --require-mode shadow --json
 
 python /tmp/repo-preflight/scripts/readiness_scan.py \
-  --repo . --release --consistency-base-ref origin/baseline
+  --repo . --release --consistency-base-ref origin/main
 ```
 
 Actions で同等確認する場合は、feature 枝を選んで `repository-guarantees` を `workflow_dispatch` する（default branch 直上だと空 diff で fail-closed）。

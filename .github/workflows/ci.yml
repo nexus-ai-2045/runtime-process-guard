@@ -72,5 +72,41 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Resolve consistency base
+        id: base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              BASE="refs/remotes/origin/${PR_BASE_REF}"
+              git rev-parse --verify -q "$BASE" >/dev/null
+              ;;
+            push)
+              if [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] \
+                && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+                BASE="$BEFORE_SHA"
+              elif git rev-parse --verify -q HEAD^ >/dev/null; then
+                # 新規ブランチの初回 push は before が all-zero。直前のコミットと比べる。
+                BASE="$(git rev-parse HEAD^)"
+              else
+                # 比較元が無い初回コミットは、空ツリーと比べて全ファイルを検査する。
+                BASE="$(git hash-object -t tree /dev/null)"
+              fi
+              ;;
+            *)
+              echo "unsupported event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          echo "base_ref=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved consistency base_ref=$BASE event=$EVENT_NAME"
+
       - name: repo-preflight consistency gate
-        run: python .tools/repo-preflight/scripts/consistency_gate.py --repo . --base-ref "refs/remotes/origin/${{ github.base_ref || 'baseline' }}" --require-config --require-mode shadow --json
+        env:
+          CONSISTENCY_BASE: ${{ steps.base.outputs.base_ref }}
+        run: python .tools/repo-preflight/scripts/consistency_gate.py --repo . --base-ref "$CONSISTENCY_BASE" --require-config --require-mode shadow --json

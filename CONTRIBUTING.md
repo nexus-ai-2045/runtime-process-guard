@@ -15,7 +15,7 @@ python -m pytest -q
 - receiptにはcommand line、manifest path、個人絶対path、secret本文を保存しない。
 - Windows / Linux、Python 3.11 / 3.13の差を考慮する。
 - 挙動変更は失敗する回帰テストを先に追加する。
-- `main` / `baseline`へ直接pushせず、`codex/` branchからPRを使う。
+- `main`へ直接pushせず、`codex/` branchからPRを使う。
 
 ## 変更前後の確認
 
