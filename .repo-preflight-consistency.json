@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nexus-ai-2045/repo-preflight/b484112e65f1a1a9ad46017b4eb8a64a75644847/schemas/repository-consistency.schema.json",
+  "$schema": "https://raw.githubusercontent.com/nexus-ai-2045/repo-preflight/5b7c774deb8e9abcf0fce0c5f39ec1c1f3a894f3/schemas/repository-consistency.schema.json",
   "schema": "repo-preflight.consistency/v1",
   "mode": "shadow",
   "ratchet": {"baseline": []},
