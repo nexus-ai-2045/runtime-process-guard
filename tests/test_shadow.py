@@ -1,0 +1,287 @@
+import pytest
+
+from runtime_process_guard import shadow
+from runtime_process_guard.shadow import ProcessIdentityRow, group_generations
+
+
+def test_groups_processes_started_within_window_into_generations() -> None:
+    rows = [
+        ProcessIdentityRow("a" * 64, 100.0),
+        ProcessIdentityRow("b" * 64, 100.4),
+        ProcessIdentityRow("a" * 64, 110.0),
+        ProcessIdentityRow("b" * 64, 110.5),
+    ]
+
+    generations = group_generations(rows, window_seconds=2.0)
+
+    assert len(generations) == 2
+    assert generations[0].process_count == 2
+    assert generations[0].unique_identity_count == 2
+    assert generations[1].process_count == 2
+
+
+def test_generation_output_contains_only_identity_prefixes() -> None:
+    rows = [ProcessIdentityRow("a" * 64, 100.0)]
+    generation = group_generations(rows)[0]
+    assert generation.identity_prefixes == ("aaaaaaaaaaaa",)
+
+
+class FakeProcess:
+    info = {"name": "node.exe", "cmdline": ["node.exe"], "create_time": 100.0}
+
+    def cmdline(self):
+        return self.info.get("cmdline", shadow._MISSING)
+
+    def create_time(self):
+        return self.info.get("create_time", shadow._MISSING)
+
+    def parent(self):
+        return None
+
+
+class NamedParent:
+    def __init__(self, name: object, parent=None):
+        self._name = name
+        self._parent = parent
+
+    def name(self):
+        return self._name
+
+    def parent(self):
+        return self._parent
+
+
+def test_missing_process_name_with_filter_is_incomplete(monkeypatch) -> None:
+    missing = object()
+    process = FakeProcess()
+    process.info = {"name": missing, "cmdline": ["node.exe"], "create_time": 100.0}
+    monkeypatch.setattr(
+        shadow.psutil, "process_iter", lambda *args, **kwargs: [process]
+    )
+
+    report = shadow.collect_shadow_snapshot("codex.exe", process_name="node.exe")
+
+    assert report["inaccessible_processes"] == 1
+    assert report["observation_complete"] is False
+
+
+def test_scan_exception_is_anonymous_incomplete(monkeypatch) -> None:
+    def explode(*args, **kwargs):
+        raise RuntimeError("secret command line must not escape")
+
+    monkeypatch.setattr(shadow.psutil, "process_iter", explode)
+
+    report = shadow.collect_shadow_snapshot("codex.exe")
+
+    assert report["inaccessible_processes"] == 1
+    assert report["observation_complete"] is False
+    assert "secret command" not in str(report)
+
+
+def test_owned_process_without_cmdline_or_creation_time_is_incomplete(
+    monkeypatch,
+) -> None:
+    process = FakeProcess()
+    process.info = {
+        "name": "node.exe",
+        "cmdline": shadow._MISSING,
+        "create_time": 100.0,
+    }
+    process.parent = lambda: NamedParent("codex.exe")
+    monkeypatch.setattr(
+        shadow.psutil, "process_iter", lambda *args, **kwargs: [process]
+    )
+
+    report = shadow.collect_shadow_snapshot("codex.exe")
+
+    assert report["inaccessible_processes"] == 1
+    assert report["observation_complete"] is False
+
+
+def test_owner_chain_depth_limit_is_incomplete(monkeypatch) -> None:
+    chain = None
+    for _ in range(13):
+        chain = NamedParent("launcher.exe", chain)
+    process = FakeProcess()
+    process.parent = lambda: chain
+    monkeypatch.setattr(
+        shadow.psutil, "process_iter", lambda *args, **kwargs: [process]
+    )
+
+    report = shadow.collect_shadow_snapshot("codex.exe")
+
+    assert report["inaccessible_processes"] == 1
+    assert report["observation_complete"] is False
+
+
+@pytest.mark.parametrize("created_at", [float("nan"), float("inf"), 1e300])
+def test_owned_process_with_nonfinite_creation_time_is_incomplete(
+    monkeypatch, created_at
+) -> None:
+    process = FakeProcess()
+    process.info = {
+        "name": "node.exe",
+        "cmdline": ["node.exe"],
+        "create_time": created_at,
+    }
+    process.parent = lambda: NamedParent("codex.exe")
+    monkeypatch.setattr(
+        shadow.psutil, "process_iter", lambda *args, **kwargs: [process]
+    )
+
+    report = shadow.collect_shadow_snapshot("codex.exe")
+
+    assert report["inaccessible_processes"] == 1
+    assert report["observation_complete"] is False
+
+
+def test_owned_process_with_non_string_cmdline_is_incomplete(monkeypatch) -> None:
+    process = FakeProcess()
+    process.info = {
+        "name": "node.exe",
+        "cmdline": ["node.exe", 123],
+        "create_time": 100.0,
+    }
+    process.parent = lambda: NamedParent("codex.exe")
+    monkeypatch.setattr(
+        shadow.psutil, "process_iter", lambda *args, **kwargs: [process]
+    )
+
+    report = shadow.collect_shadow_snapshot("codex.exe")
+
+    assert report["inaccessible_processes"] == 1
+    assert report["observation_complete"] is False
+
+
+def test_unrelated_process_missing_attributes_does_not_invalidate_snapshot(
+    monkeypatch,
+) -> None:
+    process = FakeProcess()
+    process.info = {"name": "node.exe", "cmdline": None, "create_time": None}
+    monkeypatch.setattr(
+        shadow.psutil, "process_iter", lambda *args, **kwargs: [process]
+    )
+
+    report = shadow.collect_shadow_snapshot("codex.exe", process_name="node.exe")
+
+    assert report["inaccessible_processes"] == 0
+    assert report["process_count"] == 0
+    assert report["observation_complete"] is True
+
+
+def test_resources_collect_host_memory_and_owned_rss(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    process = FakeProcess()
+    process.parent = lambda: NamedParent("codex.exe")
+    process.memory_info = lambda: SimpleNamespace(rss=456)
+    monkeypatch.setattr(shadow.psutil, "process_iter", lambda *a, **k: [process])
+    monkeypatch.setattr(
+        shadow.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=1000, available=600),
+    )
+    monkeypatch.setattr(shadow.psutil, "swap_memory", lambda: SimpleNamespace(used=123))
+    monkeypatch.setattr(shadow.psutil, "boot_time", lambda: 10.0)
+
+    resources = shadow.collect_shadow_snapshot("codex.exe")["resources"]
+    assert resources["complete"] is True
+    assert resources["owner_rss_sum_bytes"] == 456
+    assert resources["host_available_memory_bytes"] == 600
+    assert resources["host_swap_used_bytes"] == 123
+    assert resources["owner_rss_sum_may_overlap"] is True
+
+
+def test_resource_errors_are_null_and_anonymous(monkeypatch) -> None:
+    def explode():
+        raise RuntimeError("private source must not escape")
+
+    monkeypatch.setattr(shadow.psutil, "process_iter", lambda *a, **k: [])
+    monkeypatch.setattr(shadow.psutil, "swap_memory", explode)
+    report = shadow.collect_shadow_snapshot("codex.exe")
+    assert report["resources"]["host_swap_used_bytes"] is None
+    assert report["resources"]["complete"] is False
+    assert "secret" not in str(report)
+
+
+def test_missing_owned_rss_is_null_without_changing_generation_contract(monkeypatch):
+    process = FakeProcess()
+    process.parent = lambda: NamedParent("codex.exe")
+    monkeypatch.setattr(shadow.psutil, "process_iter", lambda *a, **k: [process])
+    report = shadow.collect_shadow_snapshot("codex.exe")
+    assert report["process_count"] == 1
+    assert report["observation_complete"] is True
+    assert report["resources"]["owner_rss_sum_bytes"] is None
+    assert report["resources"]["complete"] is False
+
+
+def test_failed_enumeration_cannot_report_zero_rss(monkeypatch):
+    def explode(*a, **k):
+        raise RuntimeError("private")
+
+    monkeypatch.setattr(shadow.psutil, "process_iter", explode)
+    report = shadow.collect_shadow_snapshot("codex.exe")
+    assert report["resources"]["owner_rss_sum_bytes"] is None
+    assert report["resources"]["complete"] is False
+
+
+@pytest.mark.parametrize("excluded_by", ["owner", "name"])
+def test_reads_command_only_for_selected_owner_processes(monkeypatch, excluded_by):
+    from types import SimpleNamespace
+
+    reads = []
+
+    class TrackedProcess(FakeProcess):
+        def __init__(self, label, name, owner):
+            self.label = label
+            self.info = {"name": name, "cmdline": [name], "create_time": 100.0}
+            self.parent = lambda: NamedParent(owner)
+
+        def cmdline(self):
+            reads.append(self.label)
+            return self.info["cmdline"]
+
+        def memory_info(self):
+            return SimpleNamespace(rss=100)
+
+    selected = TrackedProcess("selected", "node.exe", "codex.exe")
+    excluded = TrackedProcess(
+        "excluded",
+        "other.exe" if excluded_by == "name" else "node.exe",
+        "codex.exe" if excluded_by == "name" else "other-owner.exe",
+    )
+
+    def processes(attrs, ad_value):
+        for process in [selected, excluded]:
+            # Model psutil's eager attribute reads before yielding a process.
+            for attribute in attrs:
+                if attribute == "cmdline":
+                    process.cmdline()
+            yield process
+
+    monkeypatch.setattr(shadow.psutil, "process_iter", processes)
+    report = shadow.collect_shadow_snapshot("codex.exe", process_name="node.exe")
+
+    assert reads == ["selected"]
+    assert report["process_count"] == 1
+    assert report["observation_complete"] is True
+    assert report["resources"]["owner_rss_sum_bytes"] == 100
+
+
+@pytest.mark.parametrize("error_type", [shadow.psutil.NoSuchProcess, shadow.psutil.AccessDenied])
+def test_owned_command_read_failure_is_incomplete(monkeypatch, error_type):
+    process = FakeProcess()
+    process.parent = lambda: NamedParent("codex.exe")
+
+    def unavailable_command():
+        raise error_type(123)
+
+    process.cmdline = unavailable_command
+    monkeypatch.setattr(shadow.psutil, "process_iter", lambda *a, **k: [process])
+
+    report = shadow.collect_shadow_snapshot("codex.exe")
+
+    assert report["observation_complete"] is False
+    assert report["inaccessible_processes"] == 1
+    assert report["process_count"] == 0
+    assert report["resources"]["owner_rss_sum_bytes"] is None

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp*/
+.pytest-*/
+.venv/
+.wheel-venv/
+dist/
+build/
+*.egg-info/
+.tools/
+reports/*.json
+reports/*.md
+!reports/README.md
+state/*.json
