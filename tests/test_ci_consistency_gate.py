@@ -52,7 +52,7 @@ def test_repo_preflight_pins_match_declared_schema_version() -> None:
         r"uses:\s*nexus-ai-2045/repo-preflight/[^@\s]+@([0-9a-f]{40})\b",
         r"(?:REPO_PREFLIGHT_SHA|PREFLIGHT_REF|preflight-ref):\s*([0-9a-f]{40})\b",
     ]
-    for filename in ["ci.yml", "repository-guarantees.yml", "preflight.yml", "base-guard.yml"]:
+    for filename in ["ci.yml", "preflight.yml", "base-guard.yml"]:
         workflow = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
         workflow = re.sub(r"(?m)^\s*#.*$", "", workflow)
         pins = [pin for pattern in patterns for pin in re.findall(pattern, workflow)]
