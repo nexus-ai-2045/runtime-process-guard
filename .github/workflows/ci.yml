@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # PR の枝は pull_request で見る。push は main だけ（全枝だと PR の枝で二重に走るため）
   push:
+    branches: [main]
   pull_request:
 
 permissions:
