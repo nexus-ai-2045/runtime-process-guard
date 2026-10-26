@@ -137,7 +137,9 @@ class LeaseRegistry:
             )
             leases[index] = updated
             _check_renewal_deadline(renewal_deadline)
-            self._write_unlocked(leases, capacity=capacity)
+            self._write_unlocked(
+                leases, capacity=capacity, renewal_deadline=renewal_deadline
+            )
             return updated
 
     def release(self, lease_id: str, owner_identity: str) -> LeaseRecord:
@@ -226,6 +228,7 @@ class LeaseRegistry:
         leases: list[LeaseRecord],
         *,
         capacity: dict[str, int] | None = None,
+        renewal_deadline: datetime | None = None,
     ) -> None:
         self._assert_path_safe()
         payload = {
@@ -248,7 +251,13 @@ class LeaseRegistry:
                 stream.flush()
                 os.fsync(stream.fileno())
             self._assert_path_safe()
-            _replace_with_retry(temporary_path, self.path)
+            _replace_with_retry(
+                temporary_path,
+                self.path,
+                renewal_deadline=renewal_deadline,
+                wait_budget_seconds=self.lock_timeout_seconds
+                * _REPLACE_RETRY_LOCK_SHARE,
+            )
             temporary_path = None
         except OSError as exc:
             raise LeaseRegistryError(
@@ -322,20 +331,38 @@ def _raise_value_error(message: str) -> LeaseRecord:
 # 一瞬だけ開いていると os.replace が PermissionError（WinError 5／32）になる。
 # 排他ロックの中で短く待って同じ置き換えをやり直す。回数と待ちは有限で、
 # 尽きたら元の例外をそのまま上げる（fail-closed は変えない）。
-_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.4)
+# 待ちはロックを持ったまま行うので、合計をロック待ち（lock_timeout_seconds）の
+# 半分までに抑える。ほかの席がロック待ちで先に諦めないようにするため。
+# 更新期限（renewal_deadline）があるときは、最後の1回も含めて置き換えの直前に
+# 毎回確かめ、過ぎていたら保存せずに失敗にする。
+_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.05, 0.1, 0.2)
+_REPLACE_RETRY_LOCK_SHARE = 0.5
 _IS_WINDOWS = os.name == "nt"
 
 
-def _replace_with_retry(source: Path, target: Path) -> None:
+def _replace_with_retry(
+    source: Path,
+    target: Path,
+    *,
+    renewal_deadline: datetime | None = None,
+    wait_budget_seconds: float = 0.25,
+) -> None:
     if not _IS_WINDOWS:
+        _check_renewal_deadline(renewal_deadline)
         os.replace(source, target)
         return
+    budget_end = time.monotonic() + max(0.0, wait_budget_seconds)
     for delay in _REPLACE_RETRY_DELAYS_SECONDS:
+        _check_renewal_deadline(renewal_deadline)
         try:
             os.replace(source, target)
             return
         except PermissionError:
-            time.sleep(delay)
+            remaining = budget_end - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(delay, remaining))
+    _check_renewal_deadline(renewal_deadline)
     os.replace(source, target)
 
 

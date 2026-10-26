@@ -125,7 +125,7 @@ MicrosoftのJob Objectsは、複数プロセスを一単位として制限・計
    `runtime_process_guard.lease` は匿名identity、owner PIDと生成時刻、heartbeat、期限を保持し、
    owner不明・期限切れだがowner生存中のleaseを回収不可としてfail-closedに分類する。
    永続registryはexclusive lockとatomic replaceを使い、launcher起動前の登録、heartbeat、postflight後のCAS解除まで接続済み。
-   Windowsで置き換え先が一瞬開かれていて `os.replace` が `PermissionError`（WinError 5）になるときは、排他lockの中で有限回（合計1秒未満）だけ同じ置き換えをやり直し、尽きたら従来どおり失敗で止める。
+   Windowsで置き換え先が一瞬開かれていて `os.replace` が `PermissionError`（WinError 5）になるときは、排他lockの中で有限回だけ同じ置き換えをやり直し、尽きたら従来どおり失敗で止める。待ちの合計はlock待ち（`lock_timeout_seconds`）の半分までにする。heartbeatの更新期限（`renewal_deadline`）は、最後の1回も含めて置き換えの直前に毎回確かめ、過ぎていたら保存せずに失敗にする。
 3. [ローカル実装済み / runtime未接続] Windows Job Object adapterとguarded stdio launcherを実装する。
    `guarded-stdio` は自身が起動した子だけをJobへ割り当て、`KILL_ON_JOB_CLOSE`を設定する。
    既存PIDの採用、名前一致停止、shell文字列実行は行わない。

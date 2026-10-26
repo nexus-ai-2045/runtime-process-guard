@@ -599,3 +599,111 @@ def test_non_windows_replace_does_not_retry(tmp_path, monkeypatch):
     with pytest.raises(LeaseRegistryError, match="atomically persisted"):
         acquire_budget(registry, make_lease("alpha"))
     assert calls["count"] == 1
+
+
+def _flaky_replace(denials):
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def replace(source, target):
+        calls["count"] += 1
+        if calls["count"] <= denials:
+            raise PermissionError(13, "Access is denied")
+        real_replace(source, target)
+
+    return replace, calls
+
+
+def _renew(registry, lease, deadline):
+    return registry.heartbeat(
+        lease.lease_id,
+        lease.owner_identity,
+        heartbeat_at=lease.heartbeat_at + timedelta(seconds=1),
+        expires_at=lease.expires_at + timedelta(seconds=30),
+        renewal_deadline=deadline,
+    )
+
+
+def test_heartbeat_fails_when_deadline_passes_during_replace_retry(
+    tmp_path, monkeypatch
+):
+    # やり直しの待ちの間に更新期限を過ぎたら、置き換えが通っても保存しない
+    from runtime_process_guard import lease_registry as module
+
+    registry = budget_registry(tmp_path / "leases.json")
+    lease = make_lease("alpha")
+    acquire_budget(registry, lease)
+    replace, calls = _flaky_replace(denials=3)
+    monkeypatch.setattr(module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0.1, 0.1, 0.1, 0.1))
+    monkeypatch.setattr(module.os, "replace", replace)
+    deadline = datetime.now(timezone.utc) + timedelta(milliseconds=150)
+    with pytest.raises(LeaseRegistryError, match="renewal deadline has elapsed"):
+        _renew(registry, lease, deadline)
+    assert calls["count"] == 2
+    assert registry.read()[0].heartbeat_at == lease.heartbeat_at
+    assert not list(tmp_path.glob(".leases.json.*.tmp"))
+
+
+def test_heartbeat_checks_deadline_before_final_replace(tmp_path, monkeypatch):
+    # やり直しを使い切ったあとの最後の1回の前にも期限を見る
+    from runtime_process_guard import lease_registry as module
+
+    registry = budget_registry(tmp_path / "leases.json")
+    lease = make_lease("alpha")
+    acquire_budget(registry, lease)
+    replace, calls = _flaky_replace(denials=2)
+    monkeypatch.setattr(module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0, 0.2))
+    monkeypatch.setattr(module.os, "replace", replace)
+    deadline = datetime.now(timezone.utc) + timedelta(milliseconds=100)
+    with pytest.raises(LeaseRegistryError, match="renewal deadline has elapsed"):
+        _renew(registry, lease, deadline)
+    assert calls["count"] == 2
+    assert registry.read()[0].heartbeat_at == lease.heartbeat_at
+    assert not list(tmp_path.glob(".leases.json.*.tmp"))
+
+
+def test_heartbeat_retry_succeeds_before_deadline(tmp_path, monkeypatch):
+    from runtime_process_guard import lease_registry as module
+
+    registry = budget_registry(tmp_path / "leases.json")
+    lease = make_lease("alpha")
+    acquire_budget(registry, lease)
+    replace, calls = _flaky_replace(denials=2)
+    monkeypatch.setattr(module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0, 0, 0))
+    monkeypatch.setattr(module.os, "replace", replace)
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=30)
+    updated = _renew(registry, lease, deadline)
+    assert calls["count"] == 3
+    assert registry.read()[0].heartbeat_at == updated.heartbeat_at
+
+
+def test_replace_retry_wait_stays_within_half_of_lock_timeout(tmp_path, monkeypatch):
+    # ロックを持ったまま待つ合計は lock_timeout_seconds の半分まで
+    from runtime_process_guard import lease_registry as module
+
+    slept = []
+    real_sleep = module.time.sleep
+
+    def recording_sleep(seconds):
+        slept.append(seconds)
+        real_sleep(seconds)
+
+    def denied_replace(source, target):
+        raise PermissionError(13, "Access is denied")
+
+    registry = LeaseRegistry(
+        tmp_path / "leases.json", owner_observer=alive_owner, lock_timeout_seconds=0.2
+    )
+    monkeypatch.setattr(module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0.06, 0.06, 0.06, 0.06))
+    monkeypatch.setattr(module.os, "replace", denied_replace)
+    monkeypatch.setattr(module.time, "sleep", recording_sleep)
+    with pytest.raises(LeaseRegistryError, match="atomically persisted"):
+        acquire_budget(registry, make_lease("alpha"))
+    assert sum(slept) <= 0.1 + 1e-9
+    assert len(slept) < 4
+    assert not list(tmp_path.glob(".leases.json.*.tmp"))
+
