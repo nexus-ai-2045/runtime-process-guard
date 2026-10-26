@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import multiprocessing
+import os
 from pathlib import Path
 
 import pytest
@@ -538,3 +539,63 @@ def test_heartbeat_valid_renewal_deadline_can_update(tmp_path, monkeypatch):
     )
     assert updated.expires_at == NOW + timedelta(seconds=40)
     assert json.loads(registry.path.read_text())["schema"].endswith("v2")
+
+
+def test_windows_replace_retries_transient_access_denied(tmp_path, monkeypatch):
+    # windows の CI で並行の置き換えが WinError 5 で一度落ちた件の再現（箱では os.replace を差し替える）
+    from runtime_process_guard import lease_registry as module
+
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(source, target):
+        calls["count"] += 1
+        if calls["count"] <= 2:
+            raise PermissionError(13, "Access is denied")
+        real_replace(source, target)
+
+    monkeypatch.setattr(module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0, 0, 0))
+    monkeypatch.setattr(module.os, "replace", flaky_replace)
+    registry = budget_registry(tmp_path / "leases.json")
+    acquire_budget(registry, make_lease("alpha"))
+    assert calls["count"] == 3
+    assert len(registry.read()) == 1
+    assert not list(tmp_path.glob(".leases.json.*.tmp"))
+
+
+def test_windows_replace_still_fails_closed_after_retries(tmp_path, monkeypatch):
+    from runtime_process_guard import lease_registry as module
+
+    calls = {"count": 0}
+
+    def denied_replace(source, target):
+        calls["count"] += 1
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0, 0))
+    monkeypatch.setattr(module.os, "replace", denied_replace)
+    registry = budget_registry(tmp_path / "leases.json")
+    with pytest.raises(LeaseRegistryError, match="atomically persisted"):
+        acquire_budget(registry, make_lease("alpha"))
+    assert calls["count"] == 3
+    assert not registry.path.exists()
+    assert not list(tmp_path.glob(".leases.json.*.tmp"))
+
+
+def test_non_windows_replace_does_not_retry(tmp_path, monkeypatch):
+    from runtime_process_guard import lease_registry as module
+
+    calls = {"count": 0}
+
+    def denied_replace(source, target):
+        calls["count"] += 1
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(module, "_IS_WINDOWS", False)
+    monkeypatch.setattr(module.os, "replace", denied_replace)
+    registry = budget_registry(tmp_path / "leases.json")
+    with pytest.raises(LeaseRegistryError, match="atomically persisted"):
+        acquire_budget(registry, make_lease("alpha"))
+    assert calls["count"] == 1
