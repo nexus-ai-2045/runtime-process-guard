@@ -248,7 +248,7 @@ class LeaseRegistry:
                 stream.flush()
                 os.fsync(stream.fileno())
             self._assert_path_safe()
-            os.replace(temporary_path, self.path)
+            _replace_with_retry(temporary_path, self.path)
             temporary_path = None
         except OSError as exc:
             raise LeaseRegistryError(
@@ -316,6 +316,27 @@ class LeaseRegistry:
 
 def _raise_value_error(message: str) -> LeaseRecord:
     raise ValueError(message)
+
+
+# Windows では、置き換え先を別のプロセス（ウイルス対策・索引・直前の読み手）が
+# 一瞬だけ開いていると os.replace が PermissionError（WinError 5／32）になる。
+# 排他ロックの中で短く待って同じ置き換えをやり直す。回数と待ちは有限で、
+# 尽きたら元の例外をそのまま上げる（fail-closed は変えない）。
+_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.4)
+_IS_WINDOWS = os.name == "nt"
+
+
+def _replace_with_retry(source: Path, target: Path) -> None:
+    if not _IS_WINDOWS:
+        os.replace(source, target)
+        return
+    for delay in _REPLACE_RETRY_DELAYS_SECONDS:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(source, target)
 
 
 def _lock_descriptor(descriptor: int) -> None:
