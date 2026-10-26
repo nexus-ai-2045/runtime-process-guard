@@ -351,17 +351,20 @@ def _replace_with_retry(
         _check_renewal_deadline(renewal_deadline)
         os.replace(source, target)
         return
-    budget_end = time.monotonic() + max(0.0, wait_budget_seconds)
+    # 待ちの合計は、測った時刻ではなく頼んだ待ちの和で抑える
+    # （Windows の monotonic は刻みが粗く、時刻で測ると上限を少し越える）。
+    remaining = max(0.0, wait_budget_seconds)
     for delay in _REPLACE_RETRY_DELAYS_SECONDS:
         _check_renewal_deadline(renewal_deadline)
         try:
             os.replace(source, target)
             return
         except PermissionError:
-            remaining = budget_end - time.monotonic()
             if remaining <= 0:
                 break
-            time.sleep(min(delay, remaining))
+            step = min(delay, remaining)
+            remaining -= step
+            time.sleep(step)
     _check_renewal_deadline(renewal_deadline)
     os.replace(source, target)
 
