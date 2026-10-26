@@ -624,6 +624,29 @@ def _renew(registry, lease, deadline):
     )
 
 
+
+class _FakeClock:
+    """待ちを実際には眠らず、期限の確認に使う時刻だけ進める（CI の刻みに左右されない）。"""
+
+    def __init__(self):
+        self.now = datetime.now(timezone.utc)
+        self.slept = []
+
+    def utc_now(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += timedelta(seconds=seconds)
+
+
+def _install_fake_clock(module, monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(module, "_utc_now", clock.utc_now)
+    monkeypatch.setattr(module.time, "sleep", clock.sleep)
+    return clock
+
+
 def test_heartbeat_fails_when_deadline_passes_during_replace_retry(
     tmp_path, monkeypatch
 ):
@@ -637,9 +660,11 @@ def test_heartbeat_fails_when_deadline_passes_during_replace_retry(
     monkeypatch.setattr(module, "_IS_WINDOWS", True)
     monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0.1, 0.1, 0.1, 0.1))
     monkeypatch.setattr(module.os, "replace", replace)
-    deadline = datetime.now(timezone.utc) + timedelta(milliseconds=150)
+    clock = _install_fake_clock(module, monkeypatch)
+    deadline = clock.now + timedelta(milliseconds=150)
     with pytest.raises(LeaseRegistryError, match="renewal deadline has elapsed"):
         _renew(registry, lease, deadline)
+    # 0 秒・0.1 秒の確認は通り、0.2 秒の確認で止まる（3回目の置き換えはしない）
     assert calls["count"] == 2
     assert registry.read()[0].heartbeat_at == lease.heartbeat_at
     assert not list(tmp_path.glob(".leases.json.*.tmp"))
@@ -656,13 +681,14 @@ def test_heartbeat_checks_deadline_before_final_replace(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "_IS_WINDOWS", True)
     monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0, 0.2))
     monkeypatch.setattr(module.os, "replace", replace)
-    deadline = datetime.now(timezone.utc) + timedelta(milliseconds=100)
+    clock = _install_fake_clock(module, monkeypatch)
+    deadline = clock.now + timedelta(milliseconds=100)
     with pytest.raises(LeaseRegistryError, match="renewal deadline has elapsed"):
         _renew(registry, lease, deadline)
+    # 置き換えの拒否は2回だけで、最後の1回なら通るはずだったが、期限で止める
     assert calls["count"] == 2
     assert registry.read()[0].heartbeat_at == lease.heartbeat_at
     assert not list(tmp_path.glob(".leases.json.*.tmp"))
-
 
 def test_heartbeat_retry_succeeds_before_deadline(tmp_path, monkeypatch):
     from runtime_process_guard import lease_registry as module
@@ -684,13 +710,6 @@ def test_replace_retry_wait_stays_within_half_of_lock_timeout(tmp_path, monkeypa
     # ロックを持ったまま待つ合計は lock_timeout_seconds の半分まで
     from runtime_process_guard import lease_registry as module
 
-    slept = []
-    real_sleep = module.time.sleep
-
-    def recording_sleep(seconds):
-        slept.append(seconds)
-        real_sleep(seconds)
-
     def denied_replace(source, target):
         raise PermissionError(13, "Access is denied")
 
@@ -700,10 +719,10 @@ def test_replace_retry_wait_stays_within_half_of_lock_timeout(tmp_path, monkeypa
     monkeypatch.setattr(module, "_IS_WINDOWS", True)
     monkeypatch.setattr(module, "_REPLACE_RETRY_DELAYS_SECONDS", (0.06, 0.06, 0.06, 0.06))
     monkeypatch.setattr(module.os, "replace", denied_replace)
-    monkeypatch.setattr(module.time, "sleep", recording_sleep)
+    clock = _install_fake_clock(module, monkeypatch)
     with pytest.raises(LeaseRegistryError, match="atomically persisted"):
         acquire_budget(registry, make_lease("alpha"))
-    assert sum(slept) <= 0.1 + 1e-9
-    assert len(slept) < 4
+    assert sum(clock.slept) <= 0.1 + 1e-9
+    assert len(clock.slept) < 4
     assert not list(tmp_path.glob(".leases.json.*.tmp"))
 
