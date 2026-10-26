@@ -17,15 +17,16 @@
 | 契約 | 上流 | 設定 | 扱い |
 |---|---|---|---|
 | 文書・実装の宣言整合 | `nexus-ai-2045/repo-preflight`（`pin` `SHA`） | `.repo-preflight-consistency.json`（`shadow`） | `consistency_gate` + `readiness_scan`。`shadow` 所見は止めない。`tool_error` は `fail-closed` |
-| `tracked` ∧ `ignored` の新規悪化 | `nexus-ai-2045/ai-ratchet-gate` `v0.1.1`（`wheel` + `SHA-256`） | `.ai-ratchet-gate/baseline.txt` | 既存分は `grandfather`。`baseline` に無い新規だけ `deny` |
+| `tracked` ∧ `ignored` の新規悪化 | `nexus-ai-2045/ai-ratchet-gate` `v0.2.0`（`wheel` + `SHA-256`） | `.ai-ratchet-gate/baseline.txt` | 既存分は `grandfather`。`baseline` に無い新規だけ `deny` |
 
 整合契約は `.repo-preflight-consistency.json` を正とする。検査ロジックの複製はしない。
 
 ### トリガ方針（`Actions` 課金）
 
-- 開発保証 `workflow`（`repository-guarantees.yml`）は **`workflow_dispatch` のみ**。`pull_request` / `push` では起動しない
+- 開発保証の専用 `workflow`（旧 `repository-guarantees.yml`、`workflow_dispatch` のみ）は、実行 0 回で検査が必須チェック `all-green`（`preflight.yml`）と `ci.yml` の `consistency` に重なるため 2026-10-25 に外した
 - `workflow_dispatch` で `BASE` と `HEAD` が同一（空 `diff`）のときは差分検査を緑にしない（`fail-closed`）
 - 既存の `ci.yml`（`pytest` + 薄い `consistency`）は別契約。本節の開発保証とは混ぜない
+- `ci.yml` は `pull_request` と `main` への `push` で走る（全枝の `push` は `PR` と二重になるため 2026-10-25 に `main` だけにした）
 - `ci.yml` の `consistency` の比較元は、`PR` なら `base` `branch`、`push` なら直前の `push`（無ければ直前のコミット、初回コミットは空ツリーで全ファイル）
 - `repo-preflight` の `pin` `SHA` は `main` に入っている `commit` にする。`PR` ブランチの `SHA` は `squash` `merge` と枝削除のあと `clone` から取れなくなる
 
@@ -56,7 +57,7 @@ python /tmp/repo-preflight/scripts/readiness_scan.py \
   --repo . --release --consistency-base-ref origin/main
 ```
 
-`Actions` で同等確認する場合は、`feature` 枝を選んで `repository-guarantees` を `workflow_dispatch` する（`default` `branch` 直上だと空 `diff` で `fail-closed`）。
+`Actions` では必須チェック `all-green`（`preflight-gate` の `consistency_gate`・`readiness_scan`・`ratchet`）と `ci.yml` の `consistency` が `PR` ごとに同じ範囲を見る。
 
 ## 自動確認
 
