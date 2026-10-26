@@ -419,6 +419,10 @@ def _observe_owner(lease: LeaseRecord) -> OwnerObservation | None:
         return None
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _check_renewal_deadline(deadline: datetime | None) -> None:
-    if deadline is not None and datetime.now(timezone.utc) >= deadline:
+    if deadline is not None and _utc_now() >= deadline:
         raise LeaseRegistryError("lease renewal deadline has elapsed")
