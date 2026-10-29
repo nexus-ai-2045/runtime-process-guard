@@ -70,7 +70,7 @@ struct Snapshot: Decodable {
         guard value.schema == "runtime_process_guard.resident.v1", value.schema_version == 1,
               ["ok", "unknown"].contains(value.overall),
               ["normal", "pressured", "unknown"].contains(value.pressure.status),
-              [5, 15, 30, 60].contains(value.next_interval_seconds),
+              [5, 15, 30, 60, 120, 300].contains(value.next_interval_seconds),
               ((!value.automatic_cleanup_supported && value.automatic_cleanup_reason == "active-request-tracking-unavailable")
                || value.managedCleanupAvailable),
               (value.managed_connections_registered ?? 0) == 0,
@@ -356,7 +356,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatus()
         if stopping { outputSmokeAndExit(); return }
         if !sleeping && !collecting {
-            let seconds = snapshot?.next_interval_seconds ?? 60
+            let seconds = snapshot?.next_interval_seconds ?? 300
             timer = Timer.scheduledTimer(withTimeInterval: Double(seconds), repeats: false) { [weak self] _ in self?.refresh() }
         }
     }

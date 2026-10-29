@@ -19,6 +19,13 @@ with tempfile.TemporaryDirectory(prefix='verification-', dir=root / 'build') as 
         assert result.returncode == expected, (result.returncode, expected)
 
     fixture(valid, 0)
+    for interval in (120, 300):
+        low_frequency = json.loads(json.dumps(valid))
+        low_frequency['next_interval_seconds'] = interval
+        fixture(low_frequency, 0)
+    invalid_interval = json.loads(json.dumps(valid))
+    invalid_interval['next_interval_seconds'] = 301
+    fixture(invalid_interval, 40)
     managed = json.loads((root / "Fixtures/managed-capability.json").read_text())
     fixture(managed, 0)
     invalid = json.loads(json.dumps(managed))
@@ -76,4 +83,4 @@ with tempfile.TemporaryDirectory(prefix='verification-', dir=root / 'build') as 
     assert managed_receipt['automatic_cleanup_supported'] is True
     assert managed_receipt['managed_connections_registered'] == 0
     assert managed_receipt['collector_running'] is False
-    print(json.dumps({'新版能力表示': managed_receipt, '検査': '成功', '形式事例': 10, '二重起動拒否': True, '部分観測': receipt}, ensure_ascii=False))
+    print(json.dumps({'新版能力表示': managed_receipt, '検査': '成功', '形式事例': 13, '二重起動拒否': True, '部分観測': receipt}, ensure_ascii=False))

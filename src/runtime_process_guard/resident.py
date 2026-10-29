@@ -96,7 +96,7 @@ def _base() -> dict:
             "inventory": None, "assessment": [],
             "pressure": {"status": "unknown", "memory_pressure_level": None,
                          "swap_used_bytes": None},
-            "next_interval_seconds": 60, "automatic_cleanup_supported": sys.platform == "darwin",
+            "next_interval_seconds": 300, "automatic_cleanup_supported": sys.platform == "darwin",
             "automatic_cleanup_reason": ("managed-connection-end-only" if sys.platform == "darwin"
                                          else "active-request-tracking-unavailable"),
             # 対応能力と実接続の登録を分離。PID一覧は登録証拠にしない。
@@ -131,8 +131,11 @@ def snapshot(args: argparse.Namespace) -> dict:
             envelope["error_code"] = "pressure-unavailable"
         else:
             envelope["overall"] = "ok"
+            # 回収はguardの接続終了処理が担当するため、高頻度の全体走査は不要。
+            wall_ms = report.get("collector", {}).get("wall_ms", 0)
             envelope["next_interval_seconds"] = (
-                15 if envelope["pressure"]["status"] == "pressured" else 30
+                300 if envelope["pressure"]["status"] == "pressured"
+                or (_finite(wall_ms) and wall_ms > 2000) else 120
             )
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error,
             psutil.Error, subprocess.TimeoutExpired):

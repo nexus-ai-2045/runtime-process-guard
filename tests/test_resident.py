@@ -41,7 +41,7 @@ def test_one_observation_preserves_schema_and_unique_resource_totals(setup):
     assert len(calls) == 1
     assert result["inventory"] == original
     assert result["inventory"]["totals"]["rss_bytes"] == 30
-    assert result["next_interval_seconds"] == 30
+    assert result["next_interval_seconds"] == 120
     assert result["automatic_cleanup_supported"] is (sys.platform == "darwin")
     assert result["managed_connections_registered"] == 0
     assert {p["reason"] for p in result["assessment"]} == {"unknown-usage"}
@@ -75,7 +75,7 @@ def test_invalid_or_future_snapshot_is_not_exposed(setup, field, value):
     assert result["inventory"] is None
     assert result["assessment"] == []
     assert result["overall"] == "unknown"
-    assert result["next_interval_seconds"] == 60
+    assert result["next_interval_seconds"] == 300
 
 
 def test_incomplete_observation_is_unknown_without_enforcement(setup):
@@ -83,7 +83,7 @@ def test_incomplete_observation_is_unknown_without_enforcement(setup):
     source["collection_complete"] = False
     result = resident.snapshot(args)
     assert result["error_code"] == "incomplete-observation"
-    assert result["next_interval_seconds"] == 60
+    assert result["next_interval_seconds"] == 300
     assert result["automatic_cleanup_supported"] is (sys.platform == "darwin")
     assert result["managed_connections_registered"] == 0
 
@@ -119,7 +119,7 @@ def test_invalid_input_never_calls_collector(setup, owner, state):
     assert not calls
 
 
-@pytest.mark.parametrize("status,interval", [("pressured", 15), ("unknown", 60)])
+@pytest.mark.parametrize("status,interval", [("pressured", 300), ("unknown", 300)])
 def test_pressure_changes_interval(setup, monkeypatch, status, interval):
     args, _, _ = setup
     monkeypatch.setattr(resident, "collect_pressure", lambda: dict(
@@ -179,3 +179,13 @@ def test_json_cli_failure_reports_unavailable_not_old_state(setup, monkeypatch, 
     assert result["inventory"] is None
     assert result["automatic_cleanup_supported"] is (sys.platform == "darwin")
     assert result["managed_connections_registered"] == 0
+
+
+@pytest.mark.parametrize("wall_ms,interval", [(100, 120), (2000, 120), (2001, 300), (9000, 300)])
+def test_slow_collection_backs_off_without_more_collection(setup, wall_ms, interval):
+    args, source, calls = setup
+    source["collector"] = {"wall_ms": wall_ms}
+    result = resident.snapshot(args)
+    assert result["next_interval_seconds"] == interval
+    assert len(calls) == 1
+    assert all(row["status"] == "protected" for row in result["assessment"])
