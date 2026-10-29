@@ -310,6 +310,8 @@ def snapshot(args: argparse.Namespace) -> dict:
     cpu_start = time.process_time()
     try:
         previous = _previous(args.state)
+        if previous is not None and previous["sample_epoch"] > time.time():
+            raise ValueError("future-inventory-cache")
         if previous is not None and previous.get("owner") != args.owner:
             raise ValueError("inventory-owner-changed-use-separate-state")
         for source in (args.bindings, args.threads_db):

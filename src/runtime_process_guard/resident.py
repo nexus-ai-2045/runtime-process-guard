@@ -117,9 +117,6 @@ def snapshot(args: argparse.Namespace) -> dict:
         for path in (args.state, args.bindings, args.threads_db):
             if path is not None and not path.is_absolute():
                 raise ValueError("absolute-path-required")
-        previous = inventory._previous(args.state)
-        if previous is not None and previous["sample_epoch"] > time.time():
-            raise ValueError("future-inventory-cache")
         report = inventory.snapshot(args)
         _validate_report(report, time.time())
         envelope["inventory"] = report

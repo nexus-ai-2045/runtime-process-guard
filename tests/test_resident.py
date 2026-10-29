@@ -88,14 +88,39 @@ def test_incomplete_observation_is_unknown_without_enforcement(setup):
     assert result["managed_connections_registered"] == 0
 
 
-def test_existing_future_state_is_preserved_and_not_used(setup):
-    args, _, calls = setup
+def test_existing_future_state_is_preserved_and_not_used(tmp_path, monkeypatch):
+    args = argparse.Namespace(owner="ChatGPT", state=tmp_path / "inventory.json",
+                              bindings=None, threads_db=None)
+    monkeypatch.setattr(resident.time, "time", lambda: 101)
+    monkeypatch.setattr(inventory, "collect_processes", lambda: pytest.fail("future cache must abort before collection"))
     args.state.write_text(json.dumps(dict(schema_version=inventory.SCHEMA, sample_epoch=200)))
     before = args.state.read_bytes()
     result = resident.snapshot(args)
     assert result["inventory"] is None
-    assert calls == []
     assert args.state.read_bytes() == before
+
+
+def test_resident_reads_previous_state_only_once(tmp_path, monkeypatch):
+    args = argparse.Namespace(owner="ChatGPT", state=tmp_path / "inventory.json",
+                              bindings=None, threads_db=None)
+    original = report()
+    original["owner"] = "ChatGPT"
+    args.state.write_text(json.dumps(original), encoding="utf-8")
+    reads = []
+    read_json = inventory.read_json
+    def counted(path):
+        reads.append(path)
+        return read_json(path)
+    monkeypatch.setattr(inventory, "read_json", counted)
+    monkeypatch.setattr(resident.time, "time", lambda: 101)
+    monkeypatch.setattr(inventory, "collect_processes", lambda: ([dict(
+        pid=1, ppid=0, name="ChatGPT", created_at=1, rss_bytes=10, cpu_seconds=0)], 0))
+    monkeypatch.setattr(resident, "collect_pressure", lambda: dict(
+        status="normal", memory_pressure_level=1, swap_used_bytes=0))
+    result = resident.snapshot(args)
+    assert result["overall"] == "ok"
+    assert reads == [args.state]
+    assert all(row["status"] == "protected" for row in result["assessment"])
 
 
 def test_snapshot_error_does_not_return_old_good_cache(setup, monkeypatch):
