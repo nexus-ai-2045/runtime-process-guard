@@ -562,3 +562,211 @@ def test_capacity_rejection_does_not_launch(tmp_path, monkeypatch):
         max_total_instances=4,
     )
     assert run_guarded_stdio(options) == 20
+
+
+def test_enforce_requires_explicit_tracking_and_protection_is_exact():
+    options = validate_guard_options(mode=GuardMode.ENFORCE, track_requests=True,
+        idle_seconds=1, grace_seconds=1, command=['python'], protected_server='discord')
+    assert options.enforcement_enabled
+    assert options.track_requests
+    for name in ('my-discord-command', 'Orca', '', True):
+        with pytest.raises(ValueError):
+            validate_guard_options(mode=GuardMode.ENFORCE, track_requests=True,
+                idle_seconds=1, grace_seconds=1, command=['python'], protected_server=name)
+
+
+def test_shadow_protection_is_rejected_instead_of_using_legacy_cleanup():
+    with pytest.raises(ValueError, match='protected_server requires'):
+        validate_guard_options(mode=GuardMode.SHADOW, track_requests=True,
+            idle_seconds=1, grace_seconds=1, command=['python'], protected_server='discord')
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='tracked enforce is macOS-only')
+@pytest.mark.parametrize('case', ['pending', 'unknown', 'partial', 'protected', 'leader-ended', 'stopped-output'])
+def test_enforce_interrupted_finalization_never_forces_cleanup(tmp_path, monkeypatch, case):
+    from types import SimpleNamespace
+    import runtime_process_guard.guarded_stdio as module
+
+    threads = {}
+    read_calls = 0
+
+    class Thread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            threads[name] = self
+
+        def start(self):
+            if self.name != 'guard-lease-heartbeat' and not (
+                case == 'stopped-output' and self.name == 'guard-stdout'
+            ):
+                self.target()
+
+        def join(self, timeout):
+            if case == 'stopped-output' and self.name == 'guard-lease-heartbeat':
+                # finalize has already set heartbeat_stop. Schedule the output
+                # relay now, deterministically reproducing EAGAIN during stop.
+                threads['guard-stdout'].target()
+
+        def is_alive(self):
+            return False
+
+    class Job:
+        terminated = False
+
+        def active_process_count(self):
+            return 1
+
+        def terminate(self):
+            self.terminated = True
+            pytest.fail('enforce exception finalization must never send TERM')
+
+        def close(self):
+            pass
+
+    class Registry:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def acquire(self, *_args, **_kwargs):
+            pass
+
+        def release(self, *_args):
+            pytest.fail('a surviving group must retain its lease')
+
+    incoming = {
+        'pending': b'{"jsonrpc":"2.0","id":1,"method":"work"}\n',
+        'unknown': b'invalid\n', 'partial': b'{"jsonrpc":',
+    }.get(case, b'')
+    child = SimpleNamespace(stdin=io.BytesIO(), stdout=io.BytesIO(),
+                            returncode=0 if case == 'leader-ended' else None)
+    job = Job()
+    monkeypatch.setattr(module.sys, 'platform', 'darwin')
+    monkeypatch.setattr(module.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(incoming)))
+    monkeypatch.setattr(module.sys, 'stdout', SimpleNamespace(buffer=io.BytesIO()))
+    monkeypatch.setattr(module.threading, 'Thread', Thread)
+    monkeypatch.setattr(module, 'observe', lambda *_a, **_k: healthy_observation())
+    monkeypatch.setattr(module, 'LeaseRegistry', Registry)
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *_a, **_k: child)
+    monkeypatch.setattr(module, 'PosixGroup', lambda *_a: job)
+    monkeypatch.setattr(module, '_prepare_tracked_stdout', lambda _source: 7)
+    monkeypatch.setattr(module.os, 'read', lambda *_a: b'')
+    if case == 'stopped-output':
+        def unavailable_output(*_args):
+            nonlocal read_calls
+            read_calls += 1
+            if read_calls > 1:
+                # Bound the former busyloop so this regression fails promptly.
+                raise OSError('repeated read after stop')
+            return None, ()
+        monkeypatch.setattr(module, '_read_tracked_output', unavailable_output)
+    monkeypatch.setattr(module, '_receipt', lambda *_a, **_k: True)
+    monkeypatch.setattr(module, 'verify_owned_disappearance', lambda *_a, **_k: 'still-running')
+    monkeypatch.setattr(module, '_settle_owned_job', lambda *_a, **_k: pytest.fail('legacy cleanup invoked'))
+
+    def interrupted(_seconds):
+        raise RuntimeError('fixture interruption')
+
+    monkeypatch.setattr(module.time, 'sleep', interrupted)
+    options = validate_guard_options(mode=GuardMode.ENFORCE, track_requests=True,
+        idle_seconds=.01, grace_seconds=.1, command=['fixture'], lease_state=tmp_path/'lease.json',
+        protected_server='discord' if case == 'protected' else None)
+    with pytest.raises(RuntimeError, match='fixture interruption'):
+        run_guarded_stdio(options)
+    assert not job.terminated
+    if case in ('pending', 'unknown', 'partial', 'protected'):
+        assert not child.stdin.closed, 'interruption must not forward unsafe EOF'
+    if case == 'stopped-output':
+        assert read_calls == 1, 'output relay must exit after stop instead of spinning'
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX nonblocking pipe observation')
+def test_read_to_registration_gap_cannot_race_termination(monkeypatch):
+    import runtime_process_guard.guarded_stdio as module
+    from runtime_process_guard.rpc_activity import RpcActivityTracker
+
+    activity = RpcActivityTracker()
+    activity.close_input()
+    assert activity.begin_drain()
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    read_returned = threading.Event()
+    resume_registration = threading.Event()
+    decision_started = threading.Event()
+    decision_done = threading.Event()
+    terminated = threading.Event()
+    observed = []
+    original_read = os.read
+
+    def paused_read(descriptor, size):
+        chunk = original_read(descriptor, size)
+        if descriptor == read_fd and chunk:
+            read_returned.set()
+            assert resume_registration.wait(3)
+        return chunk
+
+    def decide_termination():
+        decision_started.set()
+        with activity.lock:
+            if activity.can_cleanup and not module._tracked_output_readable(read_fd, activity):
+                terminated.set()
+        decision_done.set()
+
+    monkeypatch.setattr(module.os, 'read', paused_read)
+    reader = threading.Thread(target=lambda: observed.append(module._read_tracked_output(read_fd, activity)))
+    decision = threading.Thread(target=decide_termination)
+    try:
+        os.write(write_fd, b'{"jsonrpc":"2.0","id":1,"method":"reverse"}\n')
+        reader.start()
+        assert read_returned.wait(3)
+        decision.start()
+        assert decision_started.wait(3)
+        assert not decision_done.wait(.1), 'termination must wait for activity registration'
+        assert not terminated.is_set()
+        resume_registration.set()
+        reader.join(timeout=3)
+        decision.join(timeout=3)
+        assert not reader.is_alive() and not decision.is_alive()
+        assert activity.unknown
+        assert not terminated.is_set()
+        activity.finish_output(observed[0][1], success=True)
+    finally:
+        resume_registration.set()
+        if reader.ident is not None:
+            reader.join(timeout=3)
+        if decision.ident is not None:
+            decision.join(timeout=3)
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX nonblocking pipe observation')
+def test_final_readability_defers_unobserved_output_and_eof_does_not_spin():
+    import runtime_process_guard.guarded_stdio as module
+    from runtime_process_guard.rpc_activity import RpcActivityTracker
+
+    activity = RpcActivityTracker()
+    activity.close_input()
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    try:
+        os.write(write_fd, b'{"jsonrpc":"2.0","method":"notification"}\n')
+        assert activity.can_cleanup
+        with activity.lock:
+            assert module._tracked_output_readable(read_fd, activity)
+        chunk, completions = module._read_tracked_output(read_fd, activity)
+        assert chunk
+        assert not activity.can_cleanup
+        activity.finish_output(completions, success=True)
+        assert not module._tracked_output_readable(read_fd, activity)
+        os.close(write_fd)
+        write_fd = None
+        assert module._tracked_output_readable(read_fd, activity)
+        assert module._read_tracked_output(read_fd, activity) == (b'', ())
+        assert activity.output_ended
+        assert not module._tracked_output_readable(read_fd, activity)
+        assert activity.can_cleanup
+    finally:
+        os.close(read_fd)
+        if write_fd is not None:
+            os.close(write_fd)

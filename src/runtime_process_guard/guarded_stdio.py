@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import select
 import subprocess
 import sys
 import threading
@@ -32,6 +33,7 @@ from .postflight import verify_owned_disappearance
 from .privacy import command_identity
 from .windows_job import WindowsJob
 from .posix_group import PosixGroup
+from .rpc_activity import RpcActivityTracker
 
 
 class GuardMode(str, Enum):
@@ -54,6 +56,9 @@ class GuardOptions:
     client_owner_pid: int | None = None
     client_owner_created_at: datetime | None = None
 
+    track_requests: bool = False
+    protected_server: str | None = None
+
     @property
     def enforcement_enabled(self) -> bool:
         return self.mode is GuardMode.ENFORCE
@@ -73,6 +78,8 @@ def validate_guard_options(
     max_total_instances: int | None = None,
     client_owner_pid: int | None = None,
     client_owner_created_at: datetime | None = None,
+    track_requests: bool = False,
+    protected_server: str | None = None,
 ) -> GuardOptions:
     if isinstance(command, (str, bytes)):
         raise TypeError("command must be an argument sequence, not shell text")
@@ -92,7 +99,13 @@ def validate_guard_options(
         raise ValueError("min_available_memory_mb must be non-negative")
     if max_cpu_percent <= 0 or not math.isfinite(max_cpu_percent):
         raise ValueError("max_cpu_percent must be positive and finite")
-    if mode is GuardMode.ENFORCE:
+    if type(track_requests) is not bool:
+        raise ValueError("track_requests must be boolean")
+    if protected_server not in (None, "discord", "orca"):
+        raise ValueError("protected_server must be discord or orca")
+    if protected_server is not None and mode is not GuardMode.ENFORCE:
+        raise ValueError("protected_server requires tracked enforce mode")
+    if mode is GuardMode.ENFORCE and not track_requests:
         raise ValueError(
             "enforce is unavailable until active JSON-RPC requests are tracked"
         )
@@ -126,6 +139,8 @@ def validate_guard_options(
         max_total_instances,
         client_owner_pid,
         client_owner_created_at,
+        track_requests,
+        protected_server,
     )
 
 
@@ -158,6 +173,41 @@ def _relay_output(
             destination.flush()
     except (BrokenPipeError, OSError, ValueError):
         relay_failed.set()
+
+
+def _prepare_tracked_stdout(source: BinaryIO) -> int:
+    descriptor = source.fileno()
+    os.set_blocking(descriptor, False)
+    return descriptor
+
+
+def _read_tracked_output(
+    descriptor: int, activity: RpcActivityTracker
+) -> tuple[bytes | None, tuple[tuple[str, bytes], ...]]:
+    """Atomically remove available pipe bytes and register their activity."""
+    with activity.lock:
+        try:
+            chunk = os.read(descriptor, 65536)
+        except BlockingIOError:
+            return None, ()
+        except (OSError, ValueError):
+            activity.mark_unknown()
+            raise
+        if not chunk:
+            activity.close_output()
+            return b"", ()
+        return chunk, activity.begin_output(chunk)
+
+
+def _tracked_output_readable(descriptor: int, activity: RpcActivityTracker) -> bool:
+    """Caller holds activity.lock through this final observation and TERM."""
+    if activity.output_ended:
+        return False
+    try:
+        return bool(select.select([descriptor], [], [], 0)[0])
+    except (OSError, ValueError):
+        activity.mark_unknown()
+        return True
 
 
 def _anonymous_identity(prefix: str, value: str) -> str:
@@ -259,6 +309,11 @@ def run_guarded_stdio(options: GuardOptions) -> int:
 
     if os.name != "nt" and sys.platform != "darwin":
         raise OSError("guarded-stdio supports Windows and macOS")
+    if options.enforcement_enabled and (not options.track_requests or os.name == "nt"):
+        # Windows Job close has kill-on-close semantics; retain that legacy
+        # shadow path until a non-destructive ownership adapter is available.
+        _receipt("request-tracking-unavailable")
+        return 40
     if options.lease_state is None:
         raise ValueError("guarded-stdio requires an explicit lease_state")
     if (
@@ -366,6 +421,17 @@ def run_guarded_stdio(options: GuardOptions) -> int:
                 _receipt("lease-state-unknown", phase="launch-cleanup-disappearance")
         raise
 
+    activity = RpcActivityTracker() if options.track_requests else None
+    tracked_stdout_fd: int | None = None
+    if options.enforcement_enabled:
+        try:
+            tracked_stdout_fd = _prepare_tracked_stdout(child.stdout)
+        except (OSError, ValueError):
+            # No input was admitted. Preserve the reservation and launched
+            # process instead of applying legacy forced cleanup on uncertainty.
+            _receipt("request-tracking-unavailable")
+            job.close()
+            return 40
     stdin_ended = threading.Event()
     relay_failed = threading.Event()
     heartbeat_failed = threading.Event()
@@ -391,29 +457,69 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             while True:
                 chunk = sys.stdin.buffer.read1(65536)
                 if not chunk:
+                    if activity is not None:
+                        activity.close_input()
                     stdin_ended.set()
-                    if not child.stdin.closed:
+                    if not options.enforcement_enabled and not child.stdin.closed:
                         child.stdin.close()
                     return
+                if activity is not None:
+                    activity.feed("client", chunk)
                 if not forwarding:
                     continue
                 try:
                     child.stdin.write(chunk)
                     child.stdin.flush()
                 except (BrokenPipeError, OSError, ValueError):
+                    if activity is not None:
+                        activity.mark_unknown()
                     relay_failed.set()
                     if os.name == "nt":
                         stdin_ended.set()
                         return
                     forwarding = False
         except (BrokenPipeError, OSError, ValueError):
+            if activity is not None:
+                activity.mark_unknown()
             if os.name == "nt":
                 stdin_ended.set()
             relay_failed.set()
 
     def relay_output() -> None:
         assert child.stdout is not None
-        _relay_output(child.stdout, sys.stdout.buffer, relay_failed)
+        if activity is None:
+            _relay_output(child.stdout, sys.stdout.buffer, relay_failed)
+            return
+        try:
+            while True:
+                if tracked_stdout_fd is not None:
+                    chunk, completions = _read_tracked_output(tracked_stdout_fd, activity)
+                    if chunk is None:
+                        if heartbeat_stop.wait(0.01):
+                            activity.mark_unknown()
+                            relay_failed.set()
+                            return
+                        continue
+                else:
+                    chunk = child.stdout.read(65536)
+                    completions = activity.begin_output(chunk) if chunk else ()
+                if not chunk:
+                    activity.close_output()
+                    relay_failed.set()
+                    return
+                # I/O remains outside the lock: a blocked client cannot
+                # prevent the input relay from serving a reverse request.
+                try:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                except (BrokenPipeError, OSError, ValueError):
+                    activity.finish_output(completions, success=False)
+                    relay_failed.set()
+                    return
+                activity.finish_output(completions, success=True)
+        except (BrokenPipeError, OSError, ValueError):
+            activity.mark_unknown()
+            relay_failed.set()
 
     input_thread = threading.Thread(target=relay_input, name="guard-stdin", daemon=True)
     output_thread = threading.Thread(
@@ -442,7 +548,13 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             return False
         if job is None:
             return False
-        postflight = _settle_owned_job(job, options.grace_seconds)
+        if options.enforcement_enabled:
+            # Never turn an exception/unknown drain into forced descendant cleanup.
+            postflight = verify_owned_disappearance(
+                job.active_process_count, timeout_seconds=options.grace_seconds
+            )
+        else:
+            postflight = _settle_owned_job(job, options.grace_seconds)
         _receipt("postflight", status=postflight)
         if postflight != "gone" or heartbeat_failed.is_set():
             return False
@@ -480,6 +592,48 @@ def run_guarded_stdio(options: GuardOptions) -> int:
                     if not client_owner_unknown:
                         _receipt("client-owner-unknown", phase="monitor")
                     client_owner_unknown = True
+            if options.enforcement_enabled:
+                assert activity is not None
+                if (not should_close or options.protected_server is not None
+                        or lifetime_unknown or client_owner_unknown):
+                    eligible = False
+                else:
+                    eligible = activity.can_cleanup
+                if not eligible:
+                    shutdown_started = None
+                elif shutdown_started is None:
+                    # EOF can cancel an async server's handlers just like TERM.
+                    # Serialize it with output observation and forwarding too.
+                    with activity.lock:
+                        assert tracked_stdout_fd is not None
+                        if (activity.can_cleanup
+                                and not _tracked_output_readable(tracked_stdout_fd, activity)
+                                and activity.begin_drain()):
+                            if child.stdin is not None and not child.stdin.closed:
+                                child.stdin.close()
+                            shutdown_started = now
+                            _receipt("graceful-shutdown-requested", reason="requests-drained")
+                if (shutdown_started is not None
+                        and now - shutdown_started >= options.grace_seconds):
+                    # Serialize with both relay observations and input EOF.
+                    with activity.lock:
+                        owner_ok = (options.client_owner_pid is None or
+                            _client_owner_status(options.client_owner_pid,
+                                options.client_owner_created_at) == "alive")
+                        if (activity.can_cleanup and not heartbeat_failed.is_set()
+                                and owner_ok and _owned_job_alive(job) is True):
+                            assert tracked_stdout_fd is not None
+                            if not _tracked_output_readable(tracked_stdout_fd, activity):
+                                termination_sent = job.terminate() is True
+                                _receipt("managed-job-terminated", reason="requests-drained")
+                                break
+                            # Let the output relay observe bytes already waiting
+                            # in the pipe before reconsidering shutdown.
+                        else:
+                            activity.mark_unknown()
+                    shutdown_started = None
+                time.sleep(0.05)
+                continue
             if should_close and shutdown_started is None:
                 shutdown_started = now
                 if child.stdin is not None and not child.stdin.closed:
@@ -511,16 +665,24 @@ def run_guarded_stdio(options: GuardOptions) -> int:
             return_code = 70
         if not finalize_lease():
             return 40
-        if lifetime_unknown or client_owner_unknown:
+        if (lifetime_unknown or client_owner_unknown
+                or (options.enforcement_enabled and activity is not None
+                    and (activity.unknown or activity.pending_count
+                         or options.protected_server is not None))):
             return 40
         if sys.platform == "darwin" and termination_sent and return_code == -15:
             return 0
         return return_code
     except BaseException:
         if _owned_job_alive(job) is not False:
-            if child.stdin is not None and not child.stdin.closed:
+            if (not options.enforcement_enabled
+                    and child.stdin is not None and not child.stdin.closed):
                 child.stdin.close()
-            _receipt("graceful-shutdown-requested", reason="guard-interrupted")
+            _receipt(
+                "managed-connection-retained" if options.enforcement_enabled
+                else "graceful-shutdown-requested",
+                reason="guard-interrupted",
+            )
             # The direct child may already be gone; postflight still owns and
             # settles surviving descendants using the same grace period.
         finalize_lease()

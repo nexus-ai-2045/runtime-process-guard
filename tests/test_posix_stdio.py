@@ -276,3 +276,243 @@ def test_server_self_term_during_grace_is_not_reported_as_success(tmp_path):
         if child.poll() is None:
             child.terminate()
             child.wait(timeout=8)
+
+
+def _stop_owned_fixture(guard, owned):
+    # These are only PIDs created by this test, never existing runtime processes.
+    if owned is not None:
+        try:
+            owned.kill()
+            owned.wait(timeout=3)
+        except (ProcessLookupError, __import__('psutil').NoSuchProcess):
+            pass
+    if guard.poll() is None:
+        guard.kill()
+        guard.wait(timeout=3)
+
+
+def test_enforce_holds_pending_after_eof_then_reclaims_after_response(tmp_path):
+    import psutil
+
+    gate = tmp_path / 'allow-response'
+    command = [sys.executable, '-u', '-c',
+        'import sys,time,json,os; from pathlib import Path; '
+        'print(json.dumps({"jsonrpc":"2.0","method":"ready","params":{"pid":os.getpid()}}),flush=True); '
+        'req=json.loads(sys.stdin.readline()); '
+        'exec("while not Path(sys.argv[1]).exists(): time.sleep(.01)"); '
+        'print(json.dumps({"jsonrpc":"2.0","id":req["id"],"result":{}}),flush=True); '
+        'sys.stdin.read(); time.sleep(60)', str(gate)]
+    guard = launch(tmp_path, command, '--mode', 'enforce', '--track-requests', '--idle-seconds', '.05')
+    owned = None
+    try:
+        owned = psutil.Process(json.loads(read_line(guard.stdout))['params']['pid'])
+        guard.stdin.write(b'{"jsonrpc":"2.0","id":7,"method":"slow"}\n')
+        guard.stdin.flush()
+        guard.stdin.close()
+        time.sleep(.8)
+        assert guard.poll() is None
+        assert owned.is_running()
+        gate.touch()
+        assert json.loads(read_line(guard.stdout))['id'] == 7
+        assert guard.wait(timeout=5) == 0
+        assert json.loads((tmp_path / 'leases.json').read_text())['leases'] == []
+        assert b'"reason": "requests-drained"' in guard.stderr.read()
+    finally:
+        gate.touch()
+        _stop_owned_fixture(guard, owned)
+
+
+@pytest.mark.parametrize('mode', ['enforce', 'shadow'])
+def test_async_server_eof_cancels_only_shadow_pending_handler(tmp_path, mode):
+    import psutil
+
+    gate = tmp_path / 'allow-async-response'
+    server = '''import asyncio,json,os,sys
+from pathlib import Path
+async def handle(request):
+    try:
+        while not Path(sys.argv[1]).exists():
+            await asyncio.sleep(.01)
+        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{}}),flush=True)
+    except asyncio.CancelledError:
+        print(json.dumps({'jsonrpc':'2.0','method':'cancelled'}),flush=True)
+        raise
+async def main():
+    reader=asyncio.StreamReader()
+    protocol=asyncio.StreamReaderProtocol(reader)
+    await asyncio.get_running_loop().connect_read_pipe(lambda:protocol,sys.stdin)
+    print(json.dumps({'jsonrpc':'2.0','method':'ready','params':{'pid':os.getpid()}}),flush=True)
+    tasks=[]
+    while line:=await reader.readline():
+        tasks.append(asyncio.create_task(handle(json.loads(line))))
+        await asyncio.sleep(0)
+asyncio.run(main())
+'''
+    guard = launch(tmp_path, [sys.executable, '-u', '-c', server, str(gate)],
+                   '--mode', mode, '--track-requests')
+    owned = None
+    try:
+        owned = psutil.Process(json.loads(read_line(guard.stdout))['params']['pid'])
+        guard.stdin.write(b'{"jsonrpc":"2.0","id":7,"method":"slow"}\n')
+        guard.stdin.close()
+        if mode == 'enforce':
+            time.sleep(.8)
+            assert guard.poll() is None, 'downstream EOF cancelled the pending handler'
+            assert owned.is_running()
+            gate.touch()
+            assert json.loads(read_line(guard.stdout)) == {'jsonrpc': '2.0', 'id': 7, 'result': {}}
+        else:
+            assert json.loads(read_line(guard.stdout))['method'] == 'cancelled'
+        assert guard.wait(timeout=5) == 0
+        assert json.loads((tmp_path / 'leases.json').read_text())['leases'] == []
+    finally:
+        gate.touch()
+        _stop_owned_fixture(guard, owned)
+
+
+@pytest.mark.parametrize('data,protected', [
+    (b'not-json\n', None),
+    (b'{"jsonrpc":', None),
+    (b'{"jsonrpc":"2.0","id":7,"method":"pending"}\n', None),
+    (b'', 'discord'), (b'', 'orca'),
+])
+def test_enforce_retains_unknown_partial_pending_and_protected(tmp_path, data, protected):
+    import psutil
+
+    extra = ['--mode', 'enforce', '--track-requests']
+    if protected:
+        extra += ['--protected-server', protected]
+    guard = launch(tmp_path, [sys.executable, '-u', '-c',
+        'import sys,time,json; print(json.dumps({"jsonrpc":"2.0","method":"ready"}),flush=True); '
+        'sys.stdin.read(); time.sleep(60)'], *extra)
+    owned = None
+    try:
+        assert json.loads(read_line(guard.stdout))['method'] == 'ready'
+        owned = psutil.Process(guard.pid).children()[0]
+        guard.stdin.write(data)
+        guard.stdin.close()
+        time.sleep(.85)
+        assert guard.poll() is None
+        assert owned.is_running()
+        assert json.loads((tmp_path / 'leases.json').read_text())['leases']
+    finally:
+        _stop_owned_fixture(guard, owned)
+
+
+def test_enforce_connected_idle_is_never_reclaimed(tmp_path):
+    import psutil
+
+    guard = launch(tmp_path, [sys.executable, '-u', '-c',
+        'import sys,time,json; print(json.dumps({"jsonrpc":"2.0","method":"ready"}),flush=True); '
+        'sys.stdin.read(); time.sleep(60)'], '--mode', 'enforce', '--track-requests', '--idle-seconds', '.01')
+    owned = None
+    try:
+        assert json.loads(read_line(guard.stdout))['method'] == 'ready'
+        owned = psutil.Process(guard.pid).children()[0]
+        time.sleep(.85)
+        assert guard.poll() is None
+        assert owned.is_running()
+        guard.stdin.close()
+        assert guard.wait(timeout=5) == 0
+    finally:
+        _stop_owned_fixture(guard, owned)
+
+
+def test_large_bidirectional_frames_do_not_lock_out_input_during_blocked_output(tmp_path):
+    import psutil
+
+    server = '''import sys,json,time,os,threading
+print(json.dumps({'jsonrpc':'2.0','method':'ready','params':{'pid':os.getpid()}}),flush=True)
+json.loads(sys.stdin.readline())
+def send_reverse():
+    print(json.dumps({'jsonrpc':'2.0','id':'reverse','method':'sampling','params':{'text':'x'*400000}}),flush=True)
+writer=threading.Thread(target=send_reverse)
+writer.start()
+request=json.loads(sys.stdin.readline())
+writer.join()
+print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{}}),flush=True)
+sys.stdin.read()
+time.sleep(60)
+'''
+    guard = launch(tmp_path, [sys.executable, '-u', '-c', server], '--mode', 'enforce', '--track-requests')
+    owned = None
+    write_done = threading.Event()
+    try:
+        owned = psutil.Process(json.loads(read_line(guard.stdout))['params']['pid'])
+        guard.stdin.write(b'{"jsonrpc":"2.0","method":"start"}\n')
+        guard.stdin.flush()
+        # Let stdout fill, then make the client fill stdin without reading stdout.
+        time.sleep(.15)
+        payload = (json.dumps({'jsonrpc':'2.0','id':'large','method':'large',
+                              'params':{'text':'y'*400000}}) + '\n').encode()
+        def send_large():
+            try:
+                guard.stdin.write(payload)
+                guard.stdin.flush()
+                write_done.set()
+            except (BrokenPipeError, ValueError):
+                pass
+        threading.Thread(target=send_large, daemon=True).start()
+        assert write_done.wait(4), 'input must progress while output is blocked'
+        assert json.loads(read_line(guard.stdout))['id'] == 'reverse'
+        assert json.loads(read_line(guard.stdout))['id'] == 'large'
+        guard.stdin.write(b'{"jsonrpc":"2.0","id":"reverse","result":{}}\n')
+        guard.stdin.close()
+        assert guard.wait(timeout=5) == 0
+    finally:
+        _stop_owned_fixture(guard, owned)
+
+
+@pytest.mark.parametrize('tail', [
+    b'{"jsonrpc":',
+    b'{"jsonrpc":"2.0","id":9,"method":"reverse"}\n',
+])
+def test_enforce_revokes_drain_for_output_partial_or_reverse_request(tmp_path, tail):
+    import psutil
+
+    server = ('import sys,time,os,json; '
+        'print(json.dumps({"jsonrpc":"2.0","method":"ready","params":{"pid":os.getpid()}}),flush=True); '
+        'sys.stdin.read(); time.sleep(.15); '
+        f'sys.stdout.buffer.write({tail!r}); sys.stdout.buffer.flush(); time.sleep(60)')
+    guard = launch(tmp_path, [sys.executable, '-u', '-c', server], '--mode', 'enforce', '--track-requests')
+    owned = None
+    try:
+        owned = psutil.Process(json.loads(read_line(guard.stdout))['params']['pid'])
+        guard.stdin.close()
+        time.sleep(.9)
+        assert guard.poll() is None
+        assert owned.is_running()
+        assert json.loads((tmp_path / 'leases.json').read_text())['leases']
+    finally:
+        _stop_owned_fixture(guard, owned)
+
+
+def test_enforce_owner_death_does_not_close_live_admission_or_authorize_cleanup(tmp_path):
+    import psutil
+    from datetime import datetime, timezone
+
+    owner = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    owner_created = datetime.fromtimestamp(psutil.Process(owner.pid).create_time(), timezone.utc).isoformat()
+    server = ('import sys,time,os,json; '
+        'print(json.dumps({"jsonrpc":"2.0","method":"ready","params":{"pid":os.getpid()}}),flush=True); '
+        'sys.stdin.read(); time.sleep(60)')
+    guard = launch(tmp_path, [sys.executable, '-u', '-c', server],
+        '--mode', 'enforce', '--track-requests', '--client-owner-pid', str(owner.pid),
+        '--client-owner-created-at', owner_created)
+    owned = None
+    try:
+        owned = psutil.Process(json.loads(read_line(guard.stdout))['params']['pid'])
+        owner.terminate()
+        owner.wait(timeout=3)
+        time.sleep(.7)
+        assert guard.poll() is None
+        assert owned.is_running()
+        guard.stdin.close()
+        time.sleep(.7)
+        assert guard.poll() is None
+        assert owned.is_running()
+    finally:
+        _stop_owned_fixture(guard, owned)
+        if owner.poll() is None:
+            owner.kill()
+            owner.wait(timeout=3)
