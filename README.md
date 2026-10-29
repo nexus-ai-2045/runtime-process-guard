@@ -8,6 +8,15 @@
 
 ローカルで `subprocess` / `MCP` / `automation` を起動する直前に、重複・資源圧・親子関係を匿名で判定し、危険な一括停止や秘密の保存をせずに起動可否を返す。
 
+## メニューバーでの継続観測
+
+`macOS`向けの軽量な常駐表示は[メニューバーアプリ](macos/MenuBar/README.md)を参照してください。
+新しい常駐はネイティブアプリ一つで、既存の一覧取得を単発で呼び出します。平常時は30秒、メモリ圧迫時は15秒、観測不明時は60秒の間隔です。
+`resident snapshot`は一覧、保護理由、圧迫状態を一つの応答にまとめます。取得不完全を正常とは扱いません。
+
+全既存プロセスを保護し、任意の既存`PID`への自動停止は行いません。自動整理は要求追跡を有効にした`guarded-stdio`の管理付き接続が終了するときだけを対象とし、アプリへ所有権を移しません。対応能力と実接続への採用は別です。アプリへの接続登録がない間は「管理付き接続 0件・待機」と表示します。低い`CPU`・子なし・同名重複・期限切れだけでは停止しません。既存の`MCP`設定やログイン設定をこの観測コマンドが変更することもありません。
+
+
 ## できること
 
 | 機能 | 用途 |
@@ -111,6 +120,46 @@ python -m runtime_process_guard.cli feedback-cycle `
 
 既存の空・不正なロック内容は、書込み中の旧所有者と終了済みの初期化を区別できないため、自動上書きせず `repair-invalid-feedback-lock` を返します。所有者確認後の復旧は呼出元の責務です。リンクされたロックは拒否し、リンク先の無関係なファイルを変更しません。
 
+### チャット別のプロセス一覧と軽い継続観測
+
+`inventory` は停止・再起動・アーカイブを行わず、既存の親子差分機能を使って現在一覧を保存します。保存先は非公開のローカル領域に指定してください。チャット名を含む一覧・対応記録は公開リポジトリへ追加しません。
+
+```bash
+python -m runtime_process_guard.cli inventory snapshot --owner ChatGPT --state /private/path/latest.json --bindings /private/path/bindings.json --threads-db /private/path/state_5.sqlite --tree
+python -m runtime_process_guard.cli inventory show --state /private/path/latest.json --tree
+python -m runtime_process_guard.cli inventory chats --threads-db /private/path/state_5.sqlite --state /private/path/latest.json --limit 50
+python -m runtime_process_guard.cli inventory watch --owner ChatGPT --state /private/path/latest.json --bindings /private/path/bindings.json --threads-db /private/path/state_5.sqlite --interval 30 --samples 120
+```
+
+登録チャット名はローカルのメタデータから読めます。`chats` は登録された表示名（`name`）を初回依頼文（`title`）より優先し、名前の一覧と保存時点の `PID` 対応を別々に出します。本文・全ログは読みません。未対応は名前取得失敗とは区別します。この一覧は明示実行時だけ読むため、監視の更新ごとに全チャットを走査しません。
+
+初回は対応記録なしで実行できます。`--bindings` と `--threads-db` は任意です。所有元の実行ファイル名は実機に合わせます。表示は保存時刻と経過秒数を明記し、`show` はプロセスや会話本文を再走査しません。`watch` は指定回数で終了する前景処理で、常駐サービス・フック・定期実行の登録は行いません。既存の実行基盤からは `snapshot` を一度ずつ呼べます。停止済み監視を勝手に再開しません。
+
+一覧は `MCP`、`node_repl`、`Node`、描画などを実行ファイル名で分類し、親子ツリー・直下と子孫の常駐メモリ（`RSS`）・チャット別合計・全体合計を出します。種別の推定は利用中や接続成功の証明ではありません。全体とチャット別合計は同じプロセスを一度だけ数え、共有・未特定を別枠にします。共有メモリを含む `RSS` の算術和であり、物理メモリやスワップの実使用量とは異なります。`CPU` は前回からの実測時間と累積使用時間の差で計算し、初回は未測定とします。
+
+#### チャットとの対応を登録する
+
+起動時刻・作業場所・共通の親だけから名前を確定しません。対象チャットの実ツールから得た識別子と、実行処理が開く専用ファイルを照合します。
+
+1. `inventory marker-script --marker /private/path/unique-marker.json` で診断用の短い命令を生成します。専用ファイルは未作成の絶対パスを指定します。
+2. 対象チャットの `node_repl/js` でその命令を一度実行します。`requestMeta.threadId`、一度限りの識別子、時刻が保存され、ファイルの開いた状態を保持します。実ツールの戻り値と対象チャットを操作者が照合してください。
+3. 読み取り専用の `lsof -t /private/path/unique-marker.json` などで、そのファイルを開く実行 `PID` を確認します。
+4. 60秒以内に次を実行します。
+
+```bash
+python -m runtime_process_guard.cli inventory bind --marker /private/path/unique-marker.json --kernel-pid 12345 --bindings /private/path/bindings.json
+```
+
+登録時だけ開いたファイルのデバイス番号・実体番号と、実行 `PID`・親サーバーの起動世代を照合します。現在は `macOS` の `lsof` と `Linux` のプロセス情報で実体照合し、確認できない環境では登録しません。ファイルの場所だけの一致や古い対応記録を採用しません。対応記録は既定30分、最大24時間で失効し、`PID`再利用や親の変更でも失効します。
+
+直接対応するのは実行処理の `PID` です。親の `node_repl` に他の実行処理がいる場合、それらを同じチャットへ割り当てません。親には関連チャット名を表示し、専有未確認の資源は未特定枠に残します。複数の直接観測があるプロセスは共有枠にします。記録は操作者が採用する診断証拠であり、署名・所有権・停止許可を作るものではありません。
+
+#### 観測自身の負荷と保存量
+
+通常の更新は実行ファイル名・親 `PID`・起動時刻・常駐メモリ・累積 `CPU` 時間を一度取得し、引数・環境変数・開いた全ファイル・会話本文・全ログを読みません。`JSON` の `collector` に収集時間・自身の `CPU` 時間・自身の常駐メモリ・走査件数を記録します。書込みを含む実行全体の時間は外側の計測と区別してください。
+
+保存する一覧は最新1件と同時更新防止の既存ロックだけです。対応記録は同じ世代・チャットを置換し、更新時に期限切れを除きます。無制限の履歴・追加の常駐アプリは作りません。更新間隔は5秒以上、既定30秒です。読み取り不能・入力不正・競合・旧版の誤帰属を含み得る記録は未確認として停止し、既存一覧を維持します。
+
 ### 親子`lineage`の差分
 
 ```powershell
@@ -141,8 +190,15 @@ python -m runtime_process_guard.cli lineage-snapshot `
 runtime-process-guard guarded-stdio --mode shadow --lease-state <state-path> --idle-seconds 600 --grace-seconds 30 -- <executable> <args...>
 ```
 
-`--mode enforce` は`active` `JSON-RPC` `request`追跡が未接続のため、現在は`fail-closed`で拒否します。
-`Obsidian` 1種類の`shadow`受入、`request`追跡の実装、再レビュー後にだけ解禁します。`command`は引数列として直接起動され、`shell`文字列は受け付けません。
+`macOS`で接続終了時の安全な自動回収を使う場合は、要求追跡を明示します。対応する`guard`だけで使える限定経路です。
+
+```sh
+runtime-process-guard guarded-stdio --track-requests --mode enforce \
+  --lease-state /absolute/private/path/managed-leases.json \
+  --grace-seconds 30 -- /absolute/path/mcp-server
+```
+
+`--mode enforce`だけでは要求追跡がないため拒否します。`command`は引数列として直接起動され、`shell`文字列は受け付けません。自動回収はクライアント入力の終端（`stdin EOF`）を確認し、双方向で観測済みの要求が応答済みとなり、出力転送も完了した場合だけです。要求追跡の破損、未応答、受付が継続中の場合は保護します。無通信時間による終了は行いません。`Discord`・`Orca`を管理付き起動へ明示接続する場合は、それぞれ`--protected-server discord`、`--protected-server orca`を指定し、自動停止を無効にします。既存の未管理プロセスは観測のみで、進行中の要求へ停止権限を広げません。
 `--lease-state` は明示必須です。`registry`には匿名識別値、`owner` `PID/`生成時刻、`heartbeat`、期限だけを保存し、`argv`、環境変数、`MCP`本文は保存しません。
 
 ## `Windows`プラグイン起動規則
@@ -252,7 +308,7 @@ git diff --check
 
 `guarded-stdio --mode shadow` は、`Mac`でも新規に起動する子だけを管理します。起動前の資源予算と、既存の所有記録台帳による接続上限を再利用します。これは起動・終了を行う明示的な入口です。現在の製品内の接続や既存`PID`へ、自動で接続する機能ではありません。
 
-`Mac`ではクライアント入力の終端（`stdin EOF`）を確認してから子の入力を閉じ、猶予時間を待ちます。残存する場合も、生きているリーダーの`PID`世代・利用者・`SID`・`PGID`を再確認できる専用グループへ`TERM`を送る範囲に限ります。リーダー消失後の古いグループへは停止信号を送りません。`SIGKILL`へ自動昇格しません。接続中は無通信・出力終了・所有記録の更新失敗・所有者の観測失敗だけを理由に終了させません。
+`Mac`の追跡付き経路ではクライアント入力の終端（`stdin EOF`）と双方向の未応答要求ゼロを確認してから子の入力を閉じ、猶予時間を待ちます。残存する場合も、生きているリーダーの`PID`世代・利用者・`SID`・`PGID`を再確認できる専用グループへ`TERM`を送る範囲に限ります。リーダー消失後の古いグループへは停止信号を送りません。`SIGKILL`へ自動昇格しません。接続中は無通信・出力終了・所有記録の更新失敗・所有者の観測失敗だけを理由に終了させません。
 
 `Mac`の所有台帳は次の形を使います。既存台帳を上書きして移行せず、専用の保存先を指定します。元の台帳形式を使う読み手は、この形式を拒否します。
 
@@ -311,3 +367,5 @@ python -m runtime_process_guard.hook_probe --server example --report-dir <privat
 保存前の設定と差分を保全し、反映後は影響を受ける全対象チャットで有効状態と実発火を確認します。対象外チャットを記録しないための`--session-id`も指定しますが、この受信後の絞り込みだけでは設定反映自体の影響範囲は狭まりません。観測が不要になった際の解除も同じ範囲の承認と検証を行い、保存内容と実行中設定の両方を確認します。`MCP`設定全体の再読込みやアプリ再起動を、観測フック反映の代用として自動実行しません。
 
 この比較が示すのは、設定一覧と実行中設定の反映が別であることです。既存`Desktop`での実イベント受領、任意の接続の所有`PID`、負荷削減は、それぞれ別に検証します。イベント未受信・所有不明・処理中の接続は引き続き保護し、自動停止の許可には使いません。
+
+回収の対象は標準入力の終端を確認した専用接続です。未読出力やサーバー内部の非同期処理の不存在までは証明しません。長寿命の購読・自律的な作業を行うサーバーは個別に保護し、稼働中の既存接続へ一括適用しません。

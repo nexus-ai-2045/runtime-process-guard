@@ -50,6 +50,7 @@ def _owner_creation_time(value: str) -> datetime:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="runtime-process-guard")
     subparsers = parser.add_subparsers(dest="action", required=True)
+    subparsers.add_parser("inventory", help="read-only cached process tree and chat attribution")
     probe = subparsers.add_parser("probe-stdio-owner")
     probe.add_argument(
         "--mcp", action="store_true", help="serve read-only stdio probe as MCP"
@@ -88,6 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
     lineage.add_argument("--previous-report", type=Path)
     guarded = subparsers.add_parser("guarded-stdio")
     guarded.add_argument("--mode", choices=("shadow", "enforce"), default="shadow")
+    guarded.add_argument("--track-requests", action="store_true")
+    guarded.add_argument("--protected-server", choices=("discord", "orca"))
     guarded.add_argument("--idle-seconds", type=float, default=600.0)
     guarded.add_argument("--grace-seconds", type=float, default=30.0)
     guarded.add_argument("--lease-state", type=Path, required=True)
@@ -337,6 +340,15 @@ def _valid_lineage_report(report: object) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    effective_argv = sys.argv[1:] if argv is None else argv
+    if effective_argv and effective_argv[0] == "resident":
+        from .resident import main as resident_main
+
+        return resident_main(effective_argv[1:])
+    if effective_argv and effective_argv[0] == "inventory":
+        from .inventory import main as inventory_main
+
+        return inventory_main(effective_argv[1:])
     args = build_parser().parse_args(argv)
     if args.action == "reconcile-disabled-plugin":
         from .disabled_plugin import run_command
@@ -359,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             options = validate_guard_options(
                 mode=GuardMode(args.mode),
+                track_requests=args.track_requests,
+                protected_server=args.protected_server,
                 idle_seconds=args.idle_seconds,
                 grace_seconds=args.grace_seconds,
                 command=command,
