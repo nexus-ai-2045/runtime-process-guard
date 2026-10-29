@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -35,7 +36,7 @@ def tree():
 @pytest.fixture
 def display_identity(tmp_path, monkeypatch):
     username = "fixture-" + tmp_path.name[-5:]
-    home = inv.Path("/Users") / username
+    home = PurePosixPath("/Users") / username
     monkeypatch.setattr(inv.Path, "home", lambda: home)
     return username, home
 
@@ -169,7 +170,7 @@ def test_title_sources_redact_private_text_before_saving_and_rendering(
     monkeypatch.setattr(inv, "collect_processes", lambda: (tree(), 0))
     monkeypatch.setattr(inv.time, "time", lambda: 20)
     report = inv.snapshot(argparse.Namespace(state=state, owner="ChatGPT", bindings=registry, threads_db=path))
-    output = json.dumps([titles, catalog, report]) + state.read_text() + inv.render(report, tree=True)
+    output = json.dumps([titles, catalog, report]) + state.read_text(encoding="utf-8") + inv.render(report, tree=True)
     assert username not in output
     assert "example-sensitive-value" not in output
     assert "%USERPROFILE%/project" in output and "<redacted>" in output
@@ -178,7 +179,7 @@ def test_title_sources_redact_private_text_before_saving_and_rendering(
 
 def test_report_redacts_titles_for_direct_child_and_related_parent(display_identity):
     username, _ = display_identity
-    home = inv.Path("/home") / username
+    home = PurePosixPath("/home") / username
     raw = f"確認 {home / 'project'} token=example-sensitive-value"
     report = inv.build_report(tree(), [10], [binding(21)], now=20, titles={T1: raw})
     output = json.dumps(report) + inv.render(report) + inv.render(report, tree=True)
