@@ -674,6 +674,8 @@ def test_enforce_interrupted_finalization_never_forces_cleanup(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match='fixture interruption'):
         run_guarded_stdio(options)
     assert not job.terminated
+    if case in ('pending', 'unknown', 'partial', 'protected'):
+        assert not child.stdin.closed, 'interruption must not forward unsafe EOF'
     if case == 'stopped-output':
         assert read_calls == 1, 'output relay must exit after stop instead of spinning'
 

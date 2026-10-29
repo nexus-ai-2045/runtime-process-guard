@@ -57,7 +57,25 @@ def test_remove_only_owned_plist_with_backup(setup):
     assert not target.exists()
     assert Path(result["backup"]).read_bytes() == raw
     assert Path(result["backup"]).stat().st_mode & 0o777 == 0o600
+    assert not Path(result["backup"]).is_relative_to(target.parent)
+    assert list(target.parent.glob("*.plist")) == []
     assert login.install(app=None, home=home, remove=True, apply=True)["action"] == "unchanged"
+
+
+def test_unsafe_backup_directory_does_not_remove_registration(setup, tmp_path):
+    home, app = setup
+    installed = login.install(app=app, home=home, apply=True, show_paths=True)
+    target = Path(installed["target"])
+    original = target.read_bytes()
+    support = home / "Library/Application Support"
+    support.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    (support / "RuntimeProcessGuard").symlink_to(foreign, target_is_directory=True)
+    with pytest.raises(login.UnsafeTarget):
+        login.install(app=None, home=home, remove=True, apply=True)
+    assert target.read_bytes() == original
+    assert list(foreign.iterdir()) == []
 
 
 @pytest.mark.parametrize("change", ["label", "marker", "program", "symlink", "writable"])

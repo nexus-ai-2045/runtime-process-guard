@@ -20,6 +20,7 @@ import time
 import psutil
 
 from .lineage import compare_lineage_reports
+from .privacy import redact_text
 
 SCHEMA = "runtime-process-guard/inventory-v2"
 BINDINGS = "runtime-process-guard/chat-bindings-v2"
@@ -33,7 +34,7 @@ def _finite(value: object) -> bool:
 
 
 def _safe_text(value: str, limit: int = 120) -> str:
-    return "".join(c if c.isprintable() else " " for c in value)[:limit]
+    return redact_text("".join(c if c.isprintable() else " " for c in value))[:limit]
 
 
 def _read_bytes(path: Path, *, private: bool = False, limit: int = MAX_BYTES) -> tuple[bytes, os.stat_result]:
@@ -180,6 +181,7 @@ def registered_chats(database: Path, *, limit: int = 50, report: dict | None = N
 def build_report(processes: list[dict], owner_pids: list[int], bindings: list[dict],
                  *, now: float, previous: dict | None = None, titles: dict | None = None) -> dict:
     """Pure grouping. Parent ancestry never proves a binding for sibling processes."""
+    titles = {tid: _safe_text(title) for tid, title in (titles or {}).items()}
     by_pid = {p["pid"]: dict(p) for p in processes}
     children: dict[int, list[int]] = defaultdict(list)
     for p in processes:
@@ -289,6 +291,12 @@ def _previous(path: Path) -> dict | None:
     r = read_json(path)
     if r.get("schema_version") != SCHEMA or not _finite(r.get("sample_epoch")):
         raise ValueError("invalid-inventory-cache")
+    # Older v2 caches remain readable, but their display metadata is not trusted.
+    for group in r.get("chat_groups", []):
+        group["title"] = _safe_text(group["title"])
+    for process in r.get("processes", []):
+        process["name"] = _safe_text(process["name"])
+        process["related_chat_titles"] = [_safe_text(title) for title in process.get("related_chat_titles", [])]
     return r
 
 

@@ -76,3 +76,5 @@ python3 macos/MenuBar/install_login.py --remove --apply --show-paths
 ```sh
 python3 -m pytest macos/MenuBar/test_install_login.py -q
 ```
+
+登録解除時の控えは、ユーザーの`Library/Application Support/RuntimeProcessGuard/login-backups`へ保存します。自動起動の読込み対象である`LaunchAgents`へは控えを置きません。

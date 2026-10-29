@@ -130,7 +130,11 @@ def install(*, app: Path | None, home: Path, apply: bool = False,
         if read_owned(target) != previous:
             raise UnsafeTarget("target-changed")
         if previous:
-            backup = directory / f"{LABEL}.backup-{uuid.uuid4().hex}.plist"
+            backup_directory = home / "Library/Application Support/RuntimeProcessGuard/login-backups"
+            safe_path(backup_directory)
+            backup_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            safe_path(backup_directory)
+            backup = backup_directory / f"{LABEL}.backup-{uuid.uuid4().hex}.plist"
             atomic_write(backup, previous[1])
         if remove:
             target.unlink()

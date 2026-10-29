@@ -460,7 +460,7 @@ def run_guarded_stdio(options: GuardOptions) -> int:
                     if activity is not None:
                         activity.close_input()
                     stdin_ended.set()
-                    if not child.stdin.closed:
+                    if not options.enforcement_enabled and not child.stdin.closed:
                         child.stdin.close()
                     return
                 if activity is not None:
@@ -601,9 +601,18 @@ def run_guarded_stdio(options: GuardOptions) -> int:
                     eligible = activity.can_cleanup
                 if not eligible:
                     shutdown_started = None
-                elif shutdown_started is None and activity.begin_drain():
-                    shutdown_started = now
-                    _receipt("graceful-shutdown-requested", reason="requests-drained")
+                elif shutdown_started is None:
+                    # EOF can cancel an async server's handlers just like TERM.
+                    # Serialize it with output observation and forwarding too.
+                    with activity.lock:
+                        assert tracked_stdout_fd is not None
+                        if (activity.can_cleanup
+                                and not _tracked_output_readable(tracked_stdout_fd, activity)
+                                and activity.begin_drain()):
+                            if child.stdin is not None and not child.stdin.closed:
+                                child.stdin.close()
+                            shutdown_started = now
+                            _receipt("graceful-shutdown-requested", reason="requests-drained")
                 if (shutdown_started is not None
                         and now - shutdown_started >= options.grace_seconds):
                     # Serialize with both relay observations and input EOF.
@@ -666,9 +675,14 @@ def run_guarded_stdio(options: GuardOptions) -> int:
         return return_code
     except BaseException:
         if _owned_job_alive(job) is not False:
-            if child.stdin is not None and not child.stdin.closed:
+            if (not options.enforcement_enabled
+                    and child.stdin is not None and not child.stdin.closed):
                 child.stdin.close()
-            _receipt("graceful-shutdown-requested", reason="guard-interrupted")
+            _receipt(
+                "managed-connection-retained" if options.enforcement_enabled
+                else "graceful-shutdown-requested",
+                reason="guard-interrupted",
+            )
             # The direct child may already be gone; postflight still owns and
             # settles surviving descendants using the same grace period.
         finalize_lease()

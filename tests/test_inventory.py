@@ -32,6 +32,14 @@ def tree():
             proc(40, 10, "Codex (Renderer)", born=5), proc(99, 1, "Orca")]
 
 
+@pytest.fixture
+def display_identity(tmp_path, monkeypatch):
+    username = "fixture-" + tmp_path.name[-5:]
+    home = inv.Path("/Users") / username
+    monkeypatch.setattr(inv.Path, "home", lambda: home)
+    return username, home
+
+
 def test_bindings_do_not_spread_to_siblings_and_totals_are_unique():
     r = inv.build_report(tree(), [10], [binding(21)], now=20, titles={T1: "実行環境"})
     rows = {p["pid"]: p for p in r["processes"]}
@@ -136,6 +144,75 @@ def test_registered_ui_name_precedes_initial_prompt_title(tmp_path):
     assert len(catalog) == 1 and catalog[0]["title"] == "登録された名前"
     assert catalog[0]["process_mapping"] == "unverified"
     assert catalog[0]["attributed_pids"] == []
+
+
+@pytest.mark.parametrize("use_name", [False, True])
+@pytest.mark.parametrize("secret", ["api_key=example-sensitive-value",
+                                   '{"api_key": "example-sensitive-value"}',
+                                   "Authorization: Bearer example-sensitive-value"])
+def test_title_sources_redact_private_text_before_saving_and_rendering(
+        tmp_path, monkeypatch, display_identity, use_name, secret):
+    username, home = display_identity
+    path = tmp_path / "threads.db"
+    raw_title = f"依頼 {home / 'project'} {secret}\x1b\n確認"
+    name = raw_title if use_name else None
+    with sqlite3.connect(path) as c:
+        c.execute("CREATE TABLE threads (id TEXT,name TEXT,title TEXT)")
+        c.execute("INSERT INTO threads VALUES (?,?,?)", (T1, name, raw_title))
+    before = path.read_bytes()
+    titles, ok = inv.chat_titles(path, {T1})
+    assert ok
+    catalog = inv.registered_chats(path)
+    registry = tmp_path / "bindings.json"
+    registry.write_text(json.dumps({"schema_version": inv.BINDINGS, "bindings": [binding(21)]}))
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(inv, "collect_processes", lambda: (tree(), 0))
+    monkeypatch.setattr(inv.time, "time", lambda: 20)
+    report = inv.snapshot(argparse.Namespace(state=state, owner="ChatGPT", bindings=registry, threads_db=path))
+    output = json.dumps([titles, catalog, report]) + state.read_text() + inv.render(report, tree=True)
+    assert username not in output
+    assert "example-sensitive-value" not in output
+    assert "%USERPROFILE%/project" in output and "<redacted>" in output
+    assert path.read_bytes() == before
+
+
+def test_report_redacts_titles_for_direct_child_and_related_parent(display_identity):
+    username, _ = display_identity
+    home = inv.Path("/home") / username
+    raw = f"確認 {home / 'project'} token=example-sensitive-value"
+    report = inv.build_report(tree(), [10], [binding(21)], now=20, titles={T1: raw})
+    output = json.dumps(report) + inv.render(report) + inv.render(report, tree=True)
+    assert username not in output
+    assert "example-sensitive-value" not in output
+    parent = next(p for p in report["processes"] if p["pid"] == 20)
+    assert parent["related_chat_titles"] == ["確認 %USERPROFILE%/project token=<redacted>"]
+
+
+@pytest.mark.parametrize("view", [[], ["--tree"], ["--json"]])
+def test_old_cached_titles_are_redacted_on_show_without_rewriting(
+        tmp_path, monkeypatch, capsys, display_identity, view):
+    username, home = display_identity
+    path = tmp_path / "state.json"
+    report = inv.build_report(tree(), [10], [binding(21)], now=20)
+    raw = f"確認 {home / 'project'} Authorization: Basic example-sensitive-value"
+    next(g for g in report["chat_groups"] if g["key"] == T1)["title"] = raw
+    next(p for p in report["processes"] if p["pid"] == 20)["related_chat_titles"] = [raw]
+    path.write_text(json.dumps(report))
+    before = path.read_bytes()
+    monkeypatch.setattr(inv, "collect_processes", lambda: pytest.fail("cached read enumerated processes"))
+    assert cli_main(["inventory", "show", "--state", str(path), *view]) == 0
+    output = capsys.readouterr().out
+    assert username not in output
+    assert "example-sensitive-value" not in output
+    assert "%USERPROFILE%/project" in output and "<redacted>" in output
+    assert path.read_bytes() == before
+
+
+def test_safe_text_redacts_current_username_without_losing_control_or_length_guard(display_identity):
+    username, _ = display_identity
+    value = inv._safe_text(f"確認{username}さん\x1b\n" + "あ" * 150)
+    assert username not in value
+    assert value.startswith("確認<user>さん  ") and len(value) == 120
 
 
 def test_catalog_shows_names_without_inventing_pid_correspondence(tmp_path, monkeypatch, capsys):

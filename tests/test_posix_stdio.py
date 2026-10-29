@@ -322,6 +322,54 @@ def test_enforce_holds_pending_after_eof_then_reclaims_after_response(tmp_path):
         _stop_owned_fixture(guard, owned)
 
 
+@pytest.mark.parametrize('mode', ['enforce', 'shadow'])
+def test_async_server_eof_cancels_only_shadow_pending_handler(tmp_path, mode):
+    import psutil
+
+    gate = tmp_path / 'allow-async-response'
+    server = '''import asyncio,json,os,sys
+from pathlib import Path
+async def handle(request):
+    try:
+        while not Path(sys.argv[1]).exists():
+            await asyncio.sleep(.01)
+        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{}}),flush=True)
+    except asyncio.CancelledError:
+        print(json.dumps({'jsonrpc':'2.0','method':'cancelled'}),flush=True)
+        raise
+async def main():
+    reader=asyncio.StreamReader()
+    protocol=asyncio.StreamReaderProtocol(reader)
+    await asyncio.get_running_loop().connect_read_pipe(lambda:protocol,sys.stdin)
+    print(json.dumps({'jsonrpc':'2.0','method':'ready','params':{'pid':os.getpid()}}),flush=True)
+    tasks=[]
+    while line:=await reader.readline():
+        tasks.append(asyncio.create_task(handle(json.loads(line))))
+        await asyncio.sleep(0)
+asyncio.run(main())
+'''
+    guard = launch(tmp_path, [sys.executable, '-u', '-c', server, str(gate)],
+                   '--mode', mode, '--track-requests')
+    owned = None
+    try:
+        owned = psutil.Process(json.loads(read_line(guard.stdout))['params']['pid'])
+        guard.stdin.write(b'{"jsonrpc":"2.0","id":7,"method":"slow"}\n')
+        guard.stdin.close()
+        if mode == 'enforce':
+            time.sleep(.8)
+            assert guard.poll() is None, 'downstream EOF cancelled the pending handler'
+            assert owned.is_running()
+            gate.touch()
+            assert json.loads(read_line(guard.stdout)) == {'jsonrpc': '2.0', 'id': 7, 'result': {}}
+        else:
+            assert json.loads(read_line(guard.stdout))['method'] == 'cancelled'
+        assert guard.wait(timeout=5) == 0
+        assert json.loads((tmp_path / 'leases.json').read_text())['leases'] == []
+    finally:
+        gate.touch()
+        _stop_owned_fixture(guard, owned)
+
+
 @pytest.mark.parametrize('data,protected', [
     (b'not-json\n', None),
     (b'{"jsonrpc":', None),

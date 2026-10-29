@@ -6,12 +6,68 @@ import hashlib
 import json
 import ntpath
 import os
+from pathlib import Path
 import re
 from collections.abc import Sequence
 
 _SECRET_KEY = re.compile(
-    r"(?i)(api[-_]?key|token|password|passwd|secret|credential|authorization)"
+    r"(api[-_]?key|token|password|passwd|secret|credential|authorization)", re.I
 )
+_TEXT_KEY = re.compile(r"[\"']?[\w-]+[\"']?")
+_AUTH_SCHEME = re.compile(r"(?:Bearer|Basic)\s+", re.I)
+_HOME_PATH = re.compile(r"(?:[a-z]:)?[/\\](?:Users|home)[/\\][^/\\\r\n\"'<>;,]+", re.I)
+
+
+def _redact_assignments(value: str) -> str:
+    parts = []
+    copied = cursor = 0
+    while match := _TEXT_KEY.search(value, cursor):
+        cursor = match.end()
+        if not _SECRET_KEY.search(match[0]):
+            continue
+        separator = cursor
+        while separator < len(value) and value[separator].isspace():
+            separator += 1
+        if separator == len(value) or value[separator] not in "=:":
+            continue
+        start = separator + 1
+        while start < len(value) and value[start].isspace():
+            start += 1
+        if start == len(value):
+            continue
+        end = start
+        if value[start] in "\"'":
+            quote = value[start]
+            end += 1
+            while end < len(value):
+                if value[end] == "\\":
+                    end = min(end + 2, len(value))
+                elif value[end] == quote:
+                    end += 1
+                    break
+                else:
+                    end += 1
+        else:
+            scheme = _AUTH_SCHEME.match(value, start)
+            end = scheme.end() if scheme else start
+            while end < len(value) and not value[end].isspace() and value[end] not in ",;}]":
+                end += 1
+        parts.extend((value[copied:start], "<redacted>"))
+        copied = cursor = end
+    return "".join(parts) + value[copied:]
+
+
+def redact_text(value: str) -> str:
+    """Redact display metadata using the command identity's secret-key policy."""
+    home = str(Path.home())
+    value = _redact_assignments(value)
+    value = re.sub(re.escape(home), "%USERPROFILE%", value, flags=re.I)
+    value = _HOME_PATH.sub("%USERPROFILE%", value)
+    username = ntpath.basename(home.replace("/", "\\"))
+    if username:
+        value = re.sub(rf"(?<![A-Za-z0-9_.<>%\-]){re.escape(username)}(?![A-Za-z0-9_.<>%\-])",
+                       "<user>", value, flags=re.I)
+    return value
 
 
 def safe_executable_name(value: str) -> str:
