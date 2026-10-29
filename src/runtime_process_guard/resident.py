@@ -12,7 +12,7 @@ import time
 
 import psutil
 
-from . import inventory
+from . import inventory, system_observation
 
 SCHEMA = "runtime_process_guard.resident.v1"
 _ALLOWED_OWNERS = {"chatgpt", "codex", "codex.exe"}
@@ -73,8 +73,8 @@ def _finite(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def _validate_report(report: dict, now: float) -> None:
-    if (report.get("schema_version") != inventory.SCHEMA
+def _validate_report(report: dict, now: float, *, schema: str = inventory.SCHEMA) -> None:
+    if (report.get("schema_version") != schema
             or not _finite(report.get("sample_epoch"))
             or not 0 < report["sample_epoch"] <= now
             or now - report["sample_epoch"] > 60
@@ -142,6 +142,45 @@ def snapshot(args: argparse.Namespace) -> dict:
     return envelope
 
 
+
+def observe(args: argparse.Namespace) -> dict:
+    """明示的な全体観測。既存snapshotとは状態・schemaを分ける。"""
+    def base():
+        return {**_base(), "schema": "runtime_process_guard.observatory.v2",
+                "schema_version": 2, "scope": "system"}
+
+    envelope = base()
+    try:
+        if args.scope != "system":
+            raise ValueError("unsupported-scope")
+        for path in (args.state, args.bindings, args.threads_db):
+            if path is not None and not path.is_absolute():
+                raise ValueError("absolute-path-required")
+        report = system_observation.snapshot(args)
+        _validate_report(report, time.time(), schema=system_observation.SCHEMA)
+        envelope["inventory"] = report
+        envelope["assessment"] = assess(report)
+        envelope["pressure"] = collect_pressure()
+        if not report.get("collection_complete"):
+            envelope["error_code"] = "incomplete-observation"
+        elif report.get("bindings_status") == "unavailable":
+            envelope["error_code"] = "bindings-unavailable"
+        elif report.get("catalog_status") == "unavailable":
+            envelope["error_code"] = "catalog-unavailable"
+        elif envelope["pressure"]["status"] == "unknown":
+            envelope["error_code"] = "pressure-unavailable"
+        else:
+            envelope["overall"] = "ok"
+            wall_ms = report.get("collector", {}).get("wall_ms", 0)
+            envelope["next_interval_seconds"] = (
+                300 if envelope["pressure"]["status"] == "pressured"
+                or (_finite(wall_ms) and wall_ms > 2000) else 120)
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error,
+            psutil.Error, subprocess.TimeoutExpired):
+        envelope = base()
+        envelope["error_code"] = "observation-unavailable"
+    return envelope
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="runtime-process-guard resident")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -151,8 +190,14 @@ def main(argv: list[str] | None = None) -> int:
     command.add_argument("--bindings", type=Path)
     command.add_argument("--threads-db", type=Path)
     command.add_argument("--json", action="store_true")
+    command = commands.add_parser("observe")
+    command.add_argument("--scope", required=True, choices=["system"])
+    command.add_argument("--state", required=True, type=Path)
+    command.add_argument("--bindings", type=Path)
+    command.add_argument("--threads-db", type=Path)
+    command.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    envelope = snapshot(args)
+    envelope = observe(args) if args.command == "observe" else snapshot(args)
     print(json.dumps(envelope, ensure_ascii=False, allow_nan=False))
     return 0 if envelope["overall"] == "ok" else 40
 

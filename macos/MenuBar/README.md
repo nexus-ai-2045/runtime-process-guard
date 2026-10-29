@@ -1,6 +1,6 @@
 # `Codex`プロセス観測メニューバー
 
-`Swift/AppKit`のアプリ一つだけが常駐し、既存 `runtime-process-guard resident snapshot` を単発で呼びます。表示対象は `ChatGPT` 所有配下です。常駐`Python`、別`daemon`、自動起動登録、インストール、設定変更を行いません。
+`Swift/AppKit`のアプリ一つだけが常駐し、既存 `runtime-process-guard resident snapshot` を単発で呼びます。既定は `ChatGPT` 所有配下、`--scope system`指定時はアクセス可能な`PC`全体が表示対象です。常駐`Python`、別`daemon`、自動起動登録、インストール、設定変更を行いません。
 
 ## ビルドと手動起動
 
@@ -78,3 +78,44 @@ python3 -m pytest macos/MenuBar/test_install_login.py -q
 ```
 
 登録解除時の控えは、ユーザーの`Library/Application Support/RuntimeProcessGuard/login-backups`へ保存します。自動起動の読込み対象である`LaunchAgents`へは控えを置きません。
+
+
+## `PC`全体とチャット対応の表示
+
+全体観測は明示的な`system`指定で起動します。従来の`v1`状態ファイルとは別の保存先を使います。
+
+```sh
+./macos/MenuBar/build/RuntimeProcessMenuBar.app/Contents/MacOS/RuntimeProcessMenuBar \
+  --cli /absolute/path/runtime-process-guard \
+  --scope system \
+  --state /absolute/private/path/system/latest.json \
+  --threads-db /absolute/private/path/state.sqlite \
+  --bindings /absolute/private/path/chat-bindings.json \
+  --show-window
+```
+
+`--threads-db`と`--bindings`は任意です。指定しなくても全件を表示し、チャット情報は未確認と示します。ビルド時の`--scope system`は生成`bundle`の既定値だけを変えます。`--show-window`は起動時に表を開く指定で、`--no-ui`とは併用できません。メニューの「全件を表で表示」からも開けます。
+
+- 全プロセス表: 観測できた全行を検索・並べ替えできます。`PID`、`OS`の親`PID`、名前、種類、`CPU`、`RSS`、チャット、帰属、保護理由を表示します。メニューの80行上限とは別の表です。
+- 登録チャット表: 登録名と対応`PID`を分けて表示します。現在は最新1000件まで読み、上限に達した場合は省略の可能性を表示します。登録名だけで実行プロセスを推定しません。
+- 種類別集計: 同じ名前・種類の本数と負荷の合計を表示します。部分観測の増減は比較不可です。合計値は観測できた範囲の部分和です。
+- 対応の証拠: 既存の`inventory marker-script`と`inventory bind`を再利用します。対象チャットの実行メタデータ、マーカーを開いた実行プロセス、`OS`のファイル記述子、`PID`世代を照合して登録します。登録は期限付きの証拠で、表示のたびに`FD`を再検証するものではありません。専有・現在の使用状態・停止許可は証明しません。
+- 関連のみ: 実行カーネルと共有の補助プロセスを区別します。親・兄弟へ専有帰属を広げず、関連先は「関連のみ・専有未確認」と表示します。
+
+収集は同時1件、通常120秒、圧迫・部分・失敗時300秒です。「今すぐ更新」も処理中は無効です。検索や並べ替えでは`OS`や`DB`を再収集しません。詳細表示の高頻度サンプリングと6標本の履歴は未実装です。終了ボタンは観測アプリ自身を閉じるもので、一覧のプロセスを停止しません。
+
+### 整理できる対象
+
+一覧の全行は保護します。低`CPU`、古い`PID`、同じ名前、本数の増加、チャットとの対応だけでは停止しません。`Discord`・`Orca`・処理中・共有・不明は自動整理の候補にしません。
+
+自動整理は、既存の`guarded-stdio --mode enforce --track-requests`で起動時から所有する専用接続が、受付終了と要求・出力の排出、世代と所有の再確認を通った場合に限ります。既存の製品接続への一括適用や、未管理`PID`の所有の後付けはしません。保護対象を管理付きで起動する場合は`--protected-server discord`または`--protected-server orca`で明示保護します。実接続は未登録のため、アプリは「管理付き接続0件」と表示します。
+
+### 再現できる検査
+
+```sh
+python -m pytest -q tests/test_system_observation.py tests/test_resident.py tests/test_inventory.py tests/test_privacy.py
+./macos/MenuBar/build.sh
+python macos/MenuBar/verify.py
+```
+
+`verify.py`は合成データで実アプリの表を起動し、検索・並べ替え・行数・単一起動を検査します。`--smoke-seconds`の`JSON`は`UI`と回収済み収集子の`CPU`秒、観測件数、部分観測、表示行数を返します。欠落を伴う終了コード40は正常成功と数えず、部分観測と実行エラーを分けて読みます。`--smoke-search`と`--smoke-sort`は有限の表示検査用で、`--show-window`と`--smoke-seconds`を併用します。実チャット名や原ログを公開用`fixture`へコピーしないでください。

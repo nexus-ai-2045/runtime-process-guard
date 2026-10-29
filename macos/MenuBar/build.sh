@@ -17,9 +17,14 @@ if [ "$#" -gt 0 ]; then
             --state) CONFIG_KEY=state ;;
             --threads-db) CONFIG_KEY=threads_db ;;
             --bindings) CONFIG_KEY=bindings ;;
+            --scope) CONFIG_KEY=scope ;;
             *) echo "未対応の引数です" >&2; exit 2 ;;
         esac
-        case "$2" in /*) ;; *) echo "絶対pathを指定してください" >&2; exit 2 ;; esac
+        if [ "$CONFIG_KEY" = scope ]; then
+            [ "$2" = system ] || { echo "scopeはsystemのみ指定できます" >&2; exit 2; }
+        else
+            case "$2" in /*) ;; *) echo "絶対pathを指定してください" >&2; exit 2 ;; esac
+        fi
         /usr/bin/plutil -insert "$CONFIG_KEY" -string "$2" "$DEFAULTS"
         shift 2
     done
