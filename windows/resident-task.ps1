@@ -30,6 +30,8 @@ if ($Mode -eq 'install') {
         $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Low-cost pressure observation; managed launch guard remains separate' | Out-Null
     }
+    # install is also the explicit resume operation, after stop-marker review.
+    Enable-ScheduledTask -TaskName $name | Out-Null
     Start-ScheduledTask -TaskName $name
 }
 if ($Mode -eq 'disable' -and $existing) {
