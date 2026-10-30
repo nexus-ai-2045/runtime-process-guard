@@ -1,5 +1,13 @@
 # ランタイム起動・回収ガード（`runtime-process-guard`）
 
+## Windowsの常駐圧迫監視
+
+`python -I -m runtime_process_guard.pressure_watch --report-path <絶対JSONパス> --stop-file <絶対停止markerパス>` は10秒ごとに軽量測定し、最新1標本を保存します。有限試験は `--interval-seconds 2 --max-cycles 2`。OS lockで重複起動を拒否します。初回CPU差分はwarming-upとして扱い、正常判定に数えません。
+
+通常インストールしたvenvのpythonw.exeと専用state directoryを使い、`windows/resident-task.ps1 -Mode install -Pythonw <pythonw.exe> -StateDirectory <directory>` でログオン時起動します。`-Mode status` で状態確認、`-Mode disable` で登録を無効化して停止markerを置きます。stop markerがある状態での自動再起動はしません。
+
+`defer-new-work` は新規作業を増やさないための観測結果です。Codexの未管理起動を強制抑止する機能ではありません。管理対象の同種2・全体4上限は既存guardへ接続した起動だけに適用されます。未管理PIDの自動killは行いません。詳細は [ADR-0006](docs/adr/ADR-0006-windows-resident-pressure-watch.md) を参照してください。
+
 ローカルの`subprocess`、`MCP` サーバー、`automation`を起動する前に、重複・`CPU`・メモリ・親子関係を確認する`privacy-first`の実行前ガードです。
 
 観測・起動判定の入口は読み取り専用です。明示的に選ぶ `guarded-stdio` は子プロセスの起動と終了を管理します。`reconcile-disabled-plugin --apply` は、別途確認した既存`MCP`の限定停止を扱う手動操作です。設定変更、外部送信、`telemetry`は行いません。
