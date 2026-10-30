@@ -1,0 +1,15 @@
+# 別チャット2枠受付のWindows限定試験（2026-10-31）
+
+## 実測範囲
+
+Desktop同梱CLIは0.165.0-alpha.1.2。既存home hookにはOrcaのUserPromptSubmit/Interrupt、fact-provenanceのStop/SessionEnd、通知にはCUAとnotify muxの既存連鎖がある。それらの変更・信頼回避は行っていない。
+
+Windowsのmultiprocessing spawnで実際に第3processを開始し、2件activeの間はwaiting行が保存されprocessが待機すること、Aのexact turnを解放後に自動で成功終了することを確認した。Desktop3チャット試験・model開始順のE2Eではない。
+
+集中回帰15件成功。2枠、FIFO、同一chatのsteering、遅延完了通知、有限待機、破損state、agent flag迂回拒否、登録済み子agent、解放保存失敗のreplay、ticket破損、清掃失敗後の冪等性、未反映親完了の保護、marker公開retry、513件の清掃障害からの回復を検査した。独立レビューの指摘を有限3修正で処理し、最後のbacklog修正は回帰テストで検証した。最後の差分の再レビューはPRで回収する。
+
+## 適用前に残る判断
+
+公式hookは新規定義をreview/trustするまで実行されない。実行失敗や外側timeoutを強制blockへ変える権限もこのpackageにはない。既存turnをdrainし、同じ登録を使う3試験チャットを開始できることを確認してから、exact定義の信頼確認とlive接続を行う。未確認の間は観測常駐を受付制限済みと扱わない。
+
+既存notifyはローカルのprevious-notify JSONへ退避したargv配列をそのまま委譲する。入力payloadは既存通知へ渡すが本gateのstate/ログへ本文を保存しない。復帰時は後続変更を照合し、今回の3hookとnotify差分だけを戻す。

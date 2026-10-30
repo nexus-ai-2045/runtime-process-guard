@@ -10,3 +10,4 @@
 | [`ADR-0004`](ADR-0004-stdio-owner-evidence-gate.md) | 読取診断採用・`owner`実証待ち | 継承`stdio`の`peer`観測と接続`owner`の証明を分離する |
 | [`ADR-0005`](ADR-0005-system-observation-and-cleanup-evidence.md) | 全体観測・表の実装済み、整理権限の拡張なし | `PC`全体の観測、チャット帰属、軽量監視、安全な整理の証拠境界 |
 | [`ADR-0006`](ADR-0006-windows-resident-pressure-watch.md) | Windows限定受入中 | 低負荷常駐、単一起動、起動制御との境界 |
+| [`ADR-0007`](ADR-0007-two-chat-turn-admission.md) | Desktop受入前 | 別チャット2件の実行前受付、FIFO待機、完了通知での解放 |
