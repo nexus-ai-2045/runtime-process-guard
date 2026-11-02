@@ -1,0 +1,8 @@
+{
+  "description": "既存hooksへ追記するためのテンプレート。PATHを実体へ置換し信頼確認後に使用。",
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "\"VENV_PYTHON\" -I -m runtime_process_guard.turn_admission --state \"ABSOLUTE_STATE_JSON\"", "timeout": 3605, "statusMessage": "同時実行2件まで。空き枠をFIFOで待っています"}]}],
+    "Interrupt": [{"hooks": [{"type": "command", "command": "\"VENV_PYTHON\" -I -m runtime_process_guard.turn_admission --state \"ABSOLUTE_STATE_JSON\"", "timeout": 3}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "\"VENV_PYTHON\" -I -m runtime_process_guard.turn_admission --state \"ABSOLUTE_STATE_JSON\"", "timeout": 3}]}]
+  }
+}
