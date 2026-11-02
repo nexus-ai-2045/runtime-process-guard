@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -45,6 +46,56 @@ def runtime_owner() -> list:
     raise ValueError("codex-runtime-owner-unavailable")
 
 
+class AdmissionCancelled(ValueError):
+    """An exact turn was interrupted and cannot be admitted again."""
+
+
+def admission_policy(state: dict, session: str, turn: str, backend: list,
+                     waiter: list, live_owners: set[tuple[int, float]]) -> tuple[dict, bool]:
+    """Compute FIFO admission from a state and supplied process observations only."""
+    data = deepcopy(state)
+    data.setdefault("cancelled", [])
+    if any((c["session"], c["turn"]) == (session, turn) for c in data["cancelled"]):
+        raise AdmissionCancelled("admission-cancelled")
+    # Only proven dead process generations are reclaimed. No age/idle guesses.
+    data["rows"] = [r for r in data["rows"] if tuple(r["backend"]) in live_owners
+                    and (r["state"] == "active" or tuple(r["waiter"]) in live_owners)]
+    row = next((r for r in data["rows"] if (r["session"], r["turn"]) == (session, turn)), None)
+    if row is None:
+        if len(data["rows"]) >= MAX_ROWS or tuple(backend) not in live_owners or tuple(waiter) not in live_owners:
+            raise ValueError("admission-unavailable")
+        row = dict(session=session, turn=turn, backend=list(backend), waiter=list(waiter),
+                   ticket=data["next_ticket"], state="waiting")
+        data["next_ticket"] += 1
+        data["rows"].append(row)
+    active = {r["session"] for r in data["rows"] if r["state"] == "active"}
+    waiting = [r for r in data["rows"] if r["state"] == "waiting"]
+    if row["state"] == "active" or session in active or (
+        len(active) < 2 and row is min(waiting, key=lambda r: r["ticket"])
+    ):
+        row["state"] = "active"
+    return data, row["state"] == "active"
+
+
+def release_policy(state: dict, item: dict) -> dict:
+    """Apply an idempotent release, retaining exact Interrupt cancellation."""
+    data = deepcopy(state)
+    if item["id"] in data["applied_releases"]:
+        return data
+    if item.get("cancelled", False):
+        cancellations = data.setdefault("cancelled", [])
+        if not any((c["session"], c["turn"]) == (item["session"], item["turn"])
+                   for c in cancellations):
+            if len(cancellations) >= MAX_ROWS:
+                raise ValueError("cancellation-history-full")
+            # Do not expire exact cancellation: a surviving poll must never requeue it.
+            cancellations.append({"session": item["session"], "turn": item["turn"]})
+    data["rows"] = [r for r in data["rows"] if not (
+        r["session"] == item["session"] and (item["turn"] is None or r["turn"] == item["turn"]))]
+    data["applied_releases"].append(item["id"])
+    return data
+
+
 class Gate:
     def __init__(self, path: Path):
         if not path.is_absolute():
@@ -54,7 +105,7 @@ class Gate:
 
     def _read(self) -> dict:
         if not self.path.exists():
-            return {"schema": SCHEMA, "limit": 2, "next_ticket": 0, "rows": [], "children": {}, "applied_releases": []}
+            return {"schema": SCHEMA, "limit": 2, "next_ticket": 0, "rows": [], "children": {}, "applied_releases": [], "cancelled": []}
         if self.path.stat().st_size > 1048576:
             raise ValueError("oversize-admission-state")
         data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -64,6 +115,14 @@ class Gate:
                 or not isinstance(data.get("children", {}), dict) or len(data.get("children", {})) > MAX_ROWS):
             raise ValueError("invalid-admission-state")
         data.setdefault("children", {})
+        cancelled = data.setdefault("cancelled", [])
+        if not isinstance(cancelled, list) or len(cancelled) > MAX_ROWS:
+            raise ValueError("invalid-cancellation-history")
+        for item in cancelled:
+            if (not isinstance(item, dict) or set(item) != {"session", "turn"}
+                    or any(not isinstance(item[x], str) or not re.fullmatch(r"[0-9a-f]{64}", item[x])
+                           for x in ("session", "turn"))):
+                raise ValueError("invalid-cancellation-history")
         applied = data.setdefault("applied_releases", [])
         if not isinstance(applied, list) or any(not isinstance(x, str) or not re.fullmatch(r"[0-9a-f]{32}", x) for x in applied):
             raise ValueError("invalid-release-acknowledgements")
@@ -108,7 +167,9 @@ class Gate:
                 if marker.stat().st_size > 1024:
                     raise ValueError("oversize-release-event")
                 item = json.loads(marker.read_text(encoding="utf-8"))
-                if (not isinstance(item, dict) or set(item) != {"session", "turn", "id"}
+                if (not isinstance(item, dict) or set(item) not in ({"session", "turn", "id"}, {"session", "turn", "id", "cancelled"})
+                        or type(item.get("cancelled", False)) is not bool
+                        or (item.get("cancelled", False) and item["turn"] is None)
                         or not isinstance(item["id"], str) or not re.fullmatch(r"[0-9a-f]{32}", item["id"])
                         or not isinstance(item["session"], str)
                         or not re.fullmatch(r"[0-9a-f]{64}", item["session"])
@@ -116,10 +177,9 @@ class Gate:
                             or not re.fullmatch(r"[0-9a-f]{64}", item["turn"])))):
                     raise ValueError("invalid-release-event")
                 present.add(item["id"])
-                if item["id"] not in data["applied_releases"]:
-                    data["rows"] = [r for r in data["rows"] if not (
-                        r["session"] == item["session"] and (item["turn"] is None or r["turn"] == item["turn"]))]
-                    data["applied_releases"].append(item["id"])
+                updated = release_policy(data, item)
+                data.clear()
+                data.update(updated)
                 files.append(marker)
         data["applied_releases"] = [x for x in data["applied_releases"] if x in present]
         active = {r["session"] for r in data["rows"] if r["state"] == "active"}
@@ -138,28 +198,30 @@ class Gate:
         with self.lock._exclusive_lock():
             data = self._read()
             releases = self._release_files(data)
-            # Only proven dead process generations are reclaimed. No age/idle guesses.
-            data["rows"] = [r for r in data["rows"] if alive(r["backend"])
-                            and (r["state"] == "active" or alive(r["waiter"]))]
-            row = next((r for r in data["rows"] if (r["session"], r["turn"]) == (session, turn)), None)
-            if row is None:
-                if len(data["rows"]) >= MAX_ROWS or not alive(backend) or not alive(waiter):
-                    raise ValueError("admission-unavailable")
-                row = dict(session=session, turn=turn, backend=backend, waiter=waiter,
-                           ticket=data["next_ticket"], state="waiting")
-                data["next_ticket"] += 1
-                data["rows"].append(row)
-            active = {r["session"] for r in data["rows"] if r["state"] == "active"}
-            waiting = [r for r in data["rows"] if r["state"] == "waiting"]
-            if row["state"] == "active" or session in active or (
-                len(active) < 2 and row is min(waiting, key=lambda r: r["ticket"])
-            ):
-                row["state"] = "active"
+            owners = [backend, waiter]
+            owners.extend(r[k] for r in data["rows"] for k in ("backend", "waiter"))
+            live_owners = set()
+            observed = set()
+            for generation in owners:
+                identity = tuple(generation)
+                if identity not in observed:
+                    if alive(generation):
+                        live_owners.add(identity)
+                    observed.add(identity)
+            try:
+                data, admitted = admission_policy(data, session, turn, backend, waiter, live_owners)
+            except AdmissionCancelled:
+                # Persist pending cancellation events before signalling the waiter to stop.
+                self._write(data)
+                self._ack(releases)
+                raise
             self._write(data)
             self._ack(releases)
-            return row["state"] == "active"
+            return admitted
 
-    def release(self, session: str, turn: str | None = None, *, waiting_only: bool = False) -> None:
+    def release(self, session: str, turn: str | None = None, *, waiting_only: bool = False, cancelled: bool = False) -> None:
+        if cancelled and (turn is None or waiting_only):
+            raise ValueError("exact-cancellation-required")
         if not waiting_only:
             from .cli import _write_report
             identifier = uuid4().hex
@@ -167,7 +229,7 @@ class Gate:
             LeaseRegistry(marker)._assert_path_safe()
             for attempt in range(3):
                 try:
-                    _write_report(marker, {"session": session, "turn": turn, "id": identifier})
+                    _write_report(marker, {"session": session, "turn": turn, "id": identifier, "cancelled": cancelled})
                     break
                 except OSError:
                     if attempt == 2:
@@ -223,8 +285,11 @@ class Gate:
         waiter = [os.getpid(), psutil.Process().create_time()]
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
-            if self.try_admit(session, turn, backend, waiter):
-                return True
+            try:
+                if self.try_admit(session, turn, backend, waiter):
+                    return True
+            except AdmissionCancelled:
+                return False
             time.sleep(min(0.5, max(0, deadline - time.monotonic())))
         self.release(session, turn, waiting_only=True)
         return False
@@ -242,7 +307,7 @@ def event(gate: Gate, payload: dict) -> bool:
         raise ValueError("session-end-without-exact-turn-is-not-release-authority")
     turn = key(payload.get("turn_id", payload.get("turn-id")))
     if name in ("agent-turn-complete", "Interrupt"):
-        gate.release(session, turn)
+        gate.release(session, turn, cancelled=name == "Interrupt")
         return True
     if name == "UserPromptSubmit":
         return gate.acquire(session, turn, runtime_owner())

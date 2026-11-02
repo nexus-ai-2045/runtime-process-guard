@@ -200,3 +200,116 @@ def test_cleanup_backlog_recovers_after_513_markers(tmp_path, monkeypatch):
         gate.try_admit(key("b"), key("t"), owner(), owner())
     assert gate.try_admit(key("b"), key("t"), owner(), owner())
     assert not list(directory.glob("*.json"))
+
+
+def test_policy_is_pure_and_uses_only_supplied_observations(monkeypatch):
+    from copy import deepcopy
+    from runtime_process_guard import turn_admission
+
+    state = {"schema": turn_admission.SCHEMA, "limit": 2, "next_ticket": 0,
+             "rows": [], "children": {}, "applied_releases": [], "cancelled": []}
+    before = deepcopy(state)
+    generation = [123, 456.0]
+    monkeypatch.setattr(turn_admission, "alive", lambda _: pytest.fail("policy observed a process"))
+    updated, admitted = turn_admission.admission_policy(
+        state, key("a"), key("t"), generation, generation, {(123, 456.0)})
+    assert admitted
+    assert state == before
+    assert updated["rows"][0]["state"] == "active"
+    updated["rows"][0]["backend"][0] = 789
+    assert generation == [123, 456.0]
+
+
+def test_interrupt_cannot_requeue_on_later_acquire_poll(tmp_path, monkeypatch):
+    from runtime_process_guard import turn_admission
+
+    gate = Gate(tmp_path / "gate.json")
+    for session in ("a", "b"):
+        assert gate.try_admit(key(session), key("t"), owner(), owner())
+    sleeps = []
+    def interrupt_then_free_slot(_):
+        sleeps.append(1)
+        assert len(sleeps) == 1
+        assert event(gate, {"hook_event_name": "Interrupt", "session_id": "c", "turn_id": "t"})
+        gate.release(key("a"), key("t"))
+    monkeypatch.setattr(turn_admission.time, "sleep", interrupt_then_free_slot)
+    assert not gate.acquire(key("c"), key("t"), owner(), wait_seconds=2)
+    assert sleeps == [1]
+    assert not any(r["session"] == key("c") for r in json.loads(gate.path.read_text())["rows"])
+    assert Gate(gate.path).try_admit(key("c"), key("next"), owner(), owner())
+
+
+def test_interrupt_before_first_poll_is_durable_and_exact(tmp_path):
+    from runtime_process_guard.turn_admission import AdmissionCancelled
+
+    gate = Gate(tmp_path / "gate.json")
+    assert event(gate, {"hook_event_name": "Interrupt", "session_id": "a", "turn_id": "t"})
+    with pytest.raises(AdmissionCancelled):
+        Gate(gate.path).try_admit(key("a"), key("t"), owner(), owner())
+    assert gate.try_admit(key("a"), key("next"), owner(), owner())
+    assert gate.try_admit(key("b"), key("t"), owner(), owner())
+
+
+def test_pending_interrupt_replay_blocks_same_pair_after_ack_cleanup(tmp_path, monkeypatch):
+    from runtime_process_guard.turn_admission import AdmissionCancelled
+
+    gate = Gate(tmp_path / "gate.json")
+    assert gate.try_admit(key("a"), key("t"), owner(), owner())
+    original = gate._write
+    monkeypatch.setattr(gate, "_write", lambda _: (_ for _ in ()).throw(OSError("busy")))
+    with pytest.raises(RuntimeError, match="release-pending-replay"):
+        event(gate, {"hook_event_name": "Interrupt", "session_id": "a", "turn_id": "t"})
+    monkeypatch.setattr(gate, "_write", original)
+    with pytest.raises(AdmissionCancelled):
+        gate.try_admit(key("a"), key("t"), owner(), owner())
+    assert not list(tmp_path.glob("*.releases/*.json"))
+    with pytest.raises(AdmissionCancelled):
+        Gate(gate.path).try_admit(key("a"), key("t"), owner(), owner())
+    assert gate.try_admit(key("a"), key("next"), owner(), owner())
+
+
+def test_cancelled_turn_cannot_return_after_runtime_generation_changes(tmp_path):
+    from runtime_process_guard.turn_admission import AdmissionCancelled
+
+    gate = Gate(tmp_path / "gate.json")
+    assert gate.try_admit(key("a"), key("t"), owner(), owner())
+    assert event(gate, {"hook_event_name": "Interrupt", "session_id": "a", "turn_id": "t"})
+    with pytest.raises(AdmissionCancelled):
+        gate.try_admit(key("a"), key("t"), [99999999, 1.0], owner())
+
+
+def test_policy_fifo_dead_generation_and_child_state_do_not_mutate_input():
+    from copy import deepcopy
+    from runtime_process_guard.turn_admission import admission_policy, SCHEMA
+
+    live, dead = [123, 456.0], [234, 567.0]
+    state = {"schema": SCHEMA, "limit": 2, "next_ticket": 4, "children": {},
+             "applied_releases": [], "cancelled": [], "rows": [
+                 {"session": key(session), "turn": key("t"), "backend": backend,
+                  "waiter": live, "ticket": ticket, "state": status}
+                 for session, backend, ticket, status in [
+                     ("a", dead, 0, "active"), ("b", live, 1, "active"),
+                     ("c", live, 2, "waiting"), ("d", live, 3, "waiting")]]}
+    before = deepcopy(state)
+    updated, admitted = admission_policy(state, key("d"), key("t"), live, live, {tuple(live)})
+    assert not admitted
+    assert len(updated["rows"]) == 3
+    updated, admitted = admission_policy(updated, key("c"), key("t"), live, live, {tuple(live)})
+    assert admitted
+    assert state == before
+
+
+def test_cancellation_history_limit_fails_closed_without_forgetting(tmp_path):
+    from runtime_process_guard.turn_admission import MAX_ROWS
+
+    gate = Gate(tmp_path / "gate.json")
+    gate.try_admit(key("a"), key("t"), owner(), owner())
+    state = json.loads(gate.path.read_text())
+    state["cancelled"] = [{"session": key("old"), "turn": key(str(i))} for i in range(MAX_ROWS)]
+    gate.path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="cancellation-history-full"):
+        event(gate, {"hook_event_name": "Interrupt", "session_id": "a", "turn_id": "t"})
+    with pytest.raises(ValueError, match="cancellation-history-full"):
+        gate.try_admit(key("a"), key("t"), owner(), owner())
+    assert json.loads(gate.path.read_text()) == state
+    assert list(tmp_path.glob("*.releases/*.json"))
