@@ -1,0 +1,121 @@
+{
+  "schema": "runtime_process_guard.observatory.v2",
+  "schema_version": 2,
+  "scope": "system",
+  "overall": "ok",
+  "inventory": {
+    "schema_version": "runtime-process-guard/system-inventory-v1",
+    "owner": "system",
+    "read_only": true,
+    "sample_epoch": 100,
+    "observed_at": "1970-01-01T00:01:40+00:00",
+    "host_session": "synthetic-host-session",
+    "sample_monotonic": 10.0,
+    "coverage": {
+      "scope": "system",
+      "observed": 1,
+      "inaccessible": 0,
+      "truncated": 0,
+      "status": "observed",
+      "enumeration": "os-best-effort"
+    },
+    "processes": [
+      {
+        "pid": 42,
+        "ppid": 0,
+        "parent_pid": null,
+        "name": "synthetic-app",
+        "created_at": 1,
+        "rss_bytes": 1024,
+        "cpu_seconds": 0,
+        "kind": "other",
+        "kind_basis": "executable-name-only",
+        "thread_ids": [],
+        "attribution": "unknown",
+        "binding_scope": "unverified",
+        "cpu_percent": null,
+        "usage_state": "unknown",
+        "subtree": {
+          "process_count": 1,
+          "rss_bytes": 1024
+        },
+        "related_thread_ids": [],
+        "related_chat_titles": []
+      }
+    ],
+    "process_groups": [
+      {
+        "name": "synthetic-app",
+        "kind": "other",
+        "pids": [
+          42
+        ],
+        "process_count": 1,
+        "rss_bytes": 1024,
+        "cpu_percent": 0,
+        "cpu_complete": false,
+        "count_delta": null,
+        "added_count": null,
+        "removed_count": null
+      }
+    ],
+    "totals": {
+      "process_count": 1,
+      "rss_bytes": 1024,
+      "cpu_percent": 0,
+      "cpu_complete": false,
+      "count_delta": null
+    },
+    "chat_groups": [
+      {
+        "key": "unknown",
+        "title": "未特定",
+        "pids": [
+          42
+        ],
+        "rss_bytes": 1024,
+        "cpu_percent": 0,
+        "cpu_complete": false
+      }
+    ],
+    "diff": {
+      "baseline_available": false,
+      "comparison_status": "unverified",
+      "added_pids": [],
+      "removed_pids": [],
+      "stable_count": 0
+    },
+    "registered_chats": [
+      {
+        "thread_id": "00000000-0000-7000-8000-000000000001",
+        "title": "合成チャット",
+        "attributed_pids": [],
+        "related_pids": [],
+        "process_mapping": "unverified"
+      }
+    ],
+    "limitations": [],
+    "owner_found": true,
+    "collection_complete": true,
+    "catalog_status": "readable",
+    "catalog_may_be_truncated": false
+  },
+  "assessment": [
+    {
+      "pid": 42,
+      "created_at": 1,
+      "status": "protected",
+      "reason": "unknown-usage"
+    }
+  ],
+  "pressure": {
+    "status": "normal",
+    "memory_pressure_level": 1,
+    "swap_used_bytes": 0
+  },
+  "next_interval_seconds": 120,
+  "automatic_cleanup_supported": true,
+  "automatic_cleanup_reason": "managed-connection-end-only",
+  "managed_connections_registered": 0,
+  "error_code": null
+}
