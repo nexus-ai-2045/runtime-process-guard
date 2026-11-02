@@ -272,7 +272,12 @@ def test_symlink_output_cannot_replace_other_file(tmp_path):
     target = tmp_path / "target"
     target.write_text("keep")
     link = tmp_path / "link"
-    link.symlink_to(target)
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows account lacks symlink creation privilege")
+        raise
     with pytest.raises(ValueError):
         inv._write(link, {"x": 1})
     assert target.read_text() == "keep"
