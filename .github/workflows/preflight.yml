@@ -14,9 +14,9 @@ permissions:
 
 jobs:
   gate:
-    uses: nexus-ai-2045/repo-preflight/.github/workflows/preflight-gate.yml@5b7c774deb8e9abcf0fce0c5f39ec1c1f3a894f3 # v0.10.0
+    uses: nexus-ai-2045/repo-preflight/.github/workflows/preflight-gate.yml@fe2e90f91615a5e5ed3f9b2b497c99f5786e5847 # base-guard廃止後の固定版
     with:
-      preflight-ref: 5b7c774deb8e9abcf0fce0c5f39ec1c1f3a894f3 # v0.10.0（uses の @ と同じ SHA）
+      preflight-ref: fe2e90f91615a5e5ed3f9b2b497c99f5786e5847 # base-guard廃止後の固定版
   # 必須にするのはこの集約ジョブ。if: で飛ばしても skipped は成功にならず赤になる
   all-green:
     if: always()
