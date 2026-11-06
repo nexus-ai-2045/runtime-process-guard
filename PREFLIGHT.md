@@ -40,7 +40,7 @@ python -m pip install --require-hashes -r requirements-tools.txt
 python -m ai_ratchet_gate --repo .
 
 # 2) repo-preflight（上流 clone。検査ロジックはコピーしない）
-REPO_PREFLIGHT_SHA=5b7c774deb8e9abcf0fce0c5f39ec1c1f3a894f3
+REPO_PREFLIGHT_SHA=fe2e90f91615a5e5ed3f9b2b497c99f5786e5847
 git clone --no-checkout https://github.com/nexus-ai-2045/repo-preflight.git /tmp/repo-preflight
 git -C /tmp/repo-preflight checkout --detach "$REPO_PREFLIGHT_SHA"
 test "$(git -C /tmp/repo-preflight rev-parse HEAD)" = "$REPO_PREFLIGHT_SHA"
