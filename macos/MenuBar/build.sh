@@ -7,7 +7,7 @@ if [ "${1:-}" = --python ]; then
     PYTHON="${2:-}"
     case "$PYTHON" in /*) ;; *) echo "Pythonの絶対パスを指定してください" >&2; exit 2 ;; esac
     [ -x "$PYTHON" ] || { echo "指定したPythonを実行できません" >&2; exit 2; }
-    PYTHONPATH="$MENU_ROOT/../../src" "$PYTHON" -B -m runtime_process_guard.resident --help >/dev/null
+    "$PYTHON" -IB -c "import sys; sys.path.insert(0, sys.argv.pop(1)); from runtime_process_guard.resident import main; raise SystemExit(main())" "$MENU_ROOT/../../src" --help >/dev/null
     shift 2
 fi
 mkdir -p "$APP_DIR/Contents/MacOS"
