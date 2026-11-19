@@ -191,6 +191,7 @@ struct Options {
     var smokeSearch: String?
     var smokeSortPID = false
     var smokeRepeatStatus = false
+    var smokeMenu = false
     var fixture: String?
     static func parse() throws -> Options {
         var result = Options()
@@ -206,6 +207,7 @@ struct Options {
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
             let key = args.removeFirst()
+            if key == "--smoke-menu" { result.smokeMenu = true; continue }
             if key == "--no-ui" { result.noUI = true; continue }
             if key == "--show-window" { result.showWindow = true; continue }
             if key == "--smoke-sort-pid" { result.smokeSortPID = true; continue }
@@ -229,7 +231,15 @@ struct Options {
         guard !(result.showWindow && result.noUI),
               (result.smokeSearch == nil && !result.smokeSortPID && !result.smokeRepeatStatus) || (result.smoke != nil && result.showWindow && result.fixture == nil)
               else { throw AppError.arguments }
+        guard !result.smokeMenu || (result.smoke != nil && !result.noUI && !result.showWindow) else { throw AppError.arguments }
         if result.fixture != nil { return result }
+        if result.cli.isEmpty, let launcher = Bundle.main.url(forAuxiliaryExecutable: "resident-collector") {
+            result.cli = launcher.path
+        }
+        if result.state.isEmpty {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            result.state = base.appendingPathComponent("RuntimeProcessGuard/menubar/\(result.scope)/latest.json").path
+        }
         guard ["legacy", "system"].contains(result.scope), result.cli.hasPrefix("/"), result.state.hasPrefix("/"),
               FileManager.default.isExecutableFile(atPath: result.cli),
               result.threads.map({ $0.hasPrefix("/") }) ?? true,
@@ -356,7 +366,7 @@ final class DetailsWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     private var lastRendered: RenderKey?
     private(set) var rebuildCount = 0
 
-    init(refresh: @escaping () -> Void) {
+    init(liveStatus: NSTextField, refresh: @escaping () -> Void) {
         refreshAction = refresh
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 650),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
@@ -377,7 +387,7 @@ final class DetailsWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         search.placeholderString = "プロセスを検索"; search.delegate = self
         search.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
         refreshButton.target = self; refreshButton.action = #selector(refreshNow)
-        container.addArrangedSubview(status); container.addArrangedSubview(bar)
+        container.addArrangedSubview(liveStatus); container.addArrangedSubview(status); container.addArrangedSubview(bar)
         let tabs = NSTabView(); container.addArrangedSubview(tabs)
         tabs.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         tabs.heightAnchor.constraint(greaterThanOrEqualToConstant: 400).isActive = true
@@ -433,6 +443,13 @@ final class DetailsWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     func sorted(_ items: [[String: String]], by table: NSTableView) -> [[String: String]] {
         guard let descriptor = table.sortDescriptors.first, let key = descriptor.key else { return items }
         return items.sorted { a, b in
+            if key == "cpu" {
+                switch (a[key].flatMap(Double.init), b[key].flatMap(Double.init)) {
+                case let (left?, right?): return descriptor.ascending ? left < right : left > right
+                case (_?, nil): return true
+                default: return false
+                }
+            }
             let comparison = (a[key] ?? "").compare(b[key] ?? "", options: [.numeric, .caseInsensitive])
             return descriptor.ascending ? comparison == .orderedAscending : comparison == .orderedDescending
         }
@@ -517,6 +534,18 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var snapshot: Snapshot?
     var errorMessage: String?
     var timer: Timer?
+    private var liveTimer: Timer?
+    private var menuOpen = false
+    private var liveSamples = 0
+    private var menuSamples = 0
+    private var validLiveSamples = 0
+    private var lastMenuSample: Double?
+    private var menuGaps: [Double] = []
+    private var menuProbeStarted = false
+    private var menuClosed = false
+    private var liveStatus = "メモリ・スワップを確認中"
+    private let menuStatus = NSTextField(wrappingLabelWithString: "")
+    private let detailLiveStatus = NSTextField(labelWithString: "")
     var sleeping = false
     var resetCPUBaseline = false
     var showCPUUnmeasured = false
@@ -548,15 +577,21 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             statusItem = item
             item.button?.title = "監視 …"
+            if #available(macOS 11.0, *) {
+                let icon = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "プロセス観測")
+                icon?.isTemplate = true
+                item.button?.image = icon
+                item.button?.imagePosition = .imageLeading
+            }
             let value = NSMenu(); value.delegate = self; menu = value; item.menu = value
             rebuildMenu()
         }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.sleeping = true; self?.observationGeneration += 1; self?.timer?.invalidate(); self?.snapshot = nil; self?.updateStatus()
+            self?.sleeping = true; self?.observationGeneration += 1; self?.timer?.invalidate(); self?.updateLiveTimer(); self?.snapshot = nil; self?.updateStatus()
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.sleeping = false; self?.observationGeneration += 1; self?.snapshot = nil; self?.resetCPUBaseline = true; self?.refresh()
+            self?.sleeping = false; self?.observationGeneration += 1; self?.snapshot = nil; self?.resetCPUBaseline = true; self?.updateLiveTimer(); self?.refresh()
         })
         if options.showWindow { openDetails() }
         refresh()
@@ -589,6 +624,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
             else if !sleeping && !collecting { refresh() }
             return
         }
+        let firstObservation = snapshot == nil
         if let decoded {
             snapshot = decoded
             errorMessage = decoded.overall == "ok" ? nil : "観測不完全・全件保護"
@@ -613,9 +649,21 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
             smokeSortChanged = before != after
             smokeSortAscending = after == after.sorted()
         }
+        if options.smokeMenu && !menuProbeStarted && !stopping {
+            menuProbeStarted = true
+            let close = Timer(timeInterval: 3.2, repeats: false) { [weak self] _ in self?.menu?.cancelTracking() }
+            RunLoop.main.add(close, forMode: .common)
+            if let menu, let button = statusItem?.button {
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+            }
+            close.invalidate()
+        }
         if stopping { outputSmokeAndExit(); return }
         if !sleeping && !collecting {
-            let seconds = snapshot?.next_interval_seconds ?? 300
+            let needsCPUBaseline = firstObservation && runs == 1 &&
+                options.scope == "system" && options.smoke == nil &&
+                snapshot?.inventory?.processes.contains(where: { $0.cpu_percent == nil }) == true
+            let seconds = needsCPUBaseline ? 2 : (snapshot?.next_interval_seconds ?? 300)
             timer = Timer.scheduledTimer(withTimeInterval: Double(seconds), repeats: false) { [weak self] _ in self?.refresh() }
         }
     }
@@ -624,6 +672,7 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return max(0, Date().timeIntervalSince1970 - inventory.sample_epoch)
     }
     func updateStatus() {
+        updateMenuStatus()
         details?.update(snapshot: snapshot, collecting: collecting, sleeping: sleeping, showCPUUnmeasured: showCPUUnmeasured)
         guard let button = statusItem?.button else { return }
         if sleeping { button.title = "監視 休止" }
@@ -635,80 +684,99 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? "Codex配下のみ観測・未管理プロセスは保護・自動整理は管理付き接続の終了時のみ"
             : "Codex配下のみ観測・未管理プロセスは保護・要求追跡の対応を未確認"
     }
-    func menuWillOpen(_ menu: NSMenu) { updateStatus(); rebuildMenu() }
-    func add(_ title: String, to target: NSMenu? = nil, indent: Int = 0) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.indentationLevel = min(indent, 8)
-        (target ?? menu)?.addItem(item)
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildMenu()
+        menuOpen = true
+        updateLiveTimer()
     }
-    func clean(_ value: String) -> String {
-        String(value.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(100))
+    func menuDidClose(_ menu: NSMenu) {
+        menuOpen = false
+        menuClosed = true
+        updateLiveTimer()
+    }
+    func updateLiveTimer() {
+        let visible = menuOpen || (details?.window.occlusionState.contains(.visible) ?? false)
+        guard visible, !sleeping, !stopping else {
+            liveTimer?.invalidate()
+            liveTimer = nil
+            return
+        }
+        guard liveTimer == nil else { return }
+        sampleLiveStatus()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.sampleLiveStatus() }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        liveTimer = timer
+    }
+    private func sampleLiveStatus() {
+        var level: Int32 = 0
+        var levelSize = MemoryLayout.size(ofValue: level)
+        let hasLevel = sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &levelSize, nil, 0) == 0
+        var swap = xsw_usage()
+        var swapSize = MemoryLayout.size(ofValue: swap)
+        let hasSwap = sysctlbyname("vm.swapusage", &swap, &swapSize, nil, 0) == 0
+        let pressure = hasLevel ? ([1: "通常", 2: "上昇", 4: "逼迫"][Int(level)] ?? "未確認") : "未確認"
+        let usage = hasSwap ? String(format: "%.1f GiB", Double(swap.xsu_used) / 1_073_741_824) : "未確認"
+        liveStatus = "メモリ負荷 \(pressure)　スワップ \(usage)"
+        liveSamples += 1
+        if hasLevel && hasSwap { validLiveSamples += 1 }
+        if menuOpen {
+            menuSamples += 1
+            let now = ProcessInfo.processInfo.systemUptime
+            if let lastMenuSample { menuGaps.append(now - lastMenuSample) }
+            lastMenuSample = now
+        }
+        detailLiveStatus.stringValue = liveStatus
+        updateMenuStatus()
+    }
+    private func updateMenuStatus() {
+        let detail: String
+        if let count = snapshot?.inventory?.totals.process_count, let seconds = age() {
+            detail = "プロセス \(count)件（\(Int(seconds))秒前）"
+                + (snapshot?.inventory?.coverage.map { "・取得不可\($0.inaccessible)件" }
+                    ?? (snapshot?.overall == "ok" ? "" : "・部分観測"))
+        } else {
+            detail = collecting ? "プロセス一覧を取得中" : (errorMessage ?? "プロセス一覧は未取得")
+        }
+        menuStatus.stringValue = liveStatus + "\n" + detail
     }
     func rebuildMenu() {
-        guard let menu else { return }
+        guard let menu, !menuOpen || menu.items.isEmpty else { return }
         menu.removeAllItems()
-        add(options.scope == "system" ? "システム全体のプロセス観測" : "Codex配下のプロセス観測")
-        if let snapshot, let inventory = snapshot.inventory, let seconds = age() {
-            if options.scope == "system" { add("OSの列挙範囲・欠落の可能性あり") }
-            add("観測から\(Int(seconds))秒\(seconds > 90 ? "・古い観測" : "")")
-            if snapshot.overall == "unknown" { add("観測不完全・取得できた範囲を表示") }
-            add("\(inventory.totals.process_count)件・RSS算術和 \(String(format: "%.1f", Double(inventory.totals.rss_bytes) / 1048576)) MiB")
-            add(inventory.totals.cpu_complete && !showCPUUnmeasured ? "CPU差分 \(String(format: "%.1f", inventory.totals.cpu_percent))%" : "CPU 初回・部分値は未測定")
-            add("保護 \(inventory.processes.count)件・停止候補 0件")
-            add("負荷状態: \(["normal": "通常", "pressured": "上昇", "unknown": "未確認"][snapshot.pressure.status] ?? "未確認")")
-            let tree = NSMenu()
-            let titles = Dictionary(inventory.chat_groups.map { ($0.key, clean($0.title)) }, uniquingKeysWith: { first, _ in first })
-            let byPID = Dictionary(uniqueKeysWithValues: inventory.processes.map { ($0.pid, $0) })
-            let reasons = Dictionary(uniqueKeysWithValues: snapshot.assessment.map { ($0.pid, $0.reason) })
-            let reasonLabels = ["unknown-usage": "使用不明", "shared": "共有", "active": "処理中", "protected-process": "保護対象", "unowned": "所有未確認"]
-            var children: [Int: [Inventory.Row]] = [:]
-            var roots: [Inventory.Row] = []
-            for row in inventory.processes {
-                if let parent = row.parent_pid, byPID[parent] != nil { children[parent, default: []].append(row) }
-                else { roots.append(row) }
-            }
-            var count = 0
-            func append(_ row: Inventory.Row, depth: Int) {
-                guard count < 80 else { return }
-                count += 1
-                let names = row.thread_ids.compactMap { titles[$0] }.prefix(2).joined(separator: "・")
-                let label = names.isEmpty ? (row.attribution == "shared" ? "共有" : "未特定") : names
-                add("PID \(row.pid) \(clean(row.name)) · \(label) [保護: \(reasonLabels[reasons[row.pid] ?? ""] ?? "未確認")]", to: tree, indent: depth)
-                for child in (children[row.pid] ?? []).sorted(by: { $0.pid < $1.pid }) { append(child, depth: depth + 1) }
-            }
-            for row in roots.sorted(by: { $0.pid < $1.pid }) { append(row, depth: 0) }
-            if byPID.count > count { add("ほか\(byPID.count - count)件（表示上限80件）", to: tree) }
-            let item = NSMenuItem(title: "親子ツリー・PID・登録名", action: nil, keyEquivalent: "")
-            item.submenu = tree; menu.addItem(item)
-        } else {
-            add(sleeping ? "休止中・復帰後に再観測" : (errorMessage ?? "観測待ち"))
-            add("件数・RSS・CPU: 未確認")
-            add("全件保護・停止候補 0件")
-        }
-        add(snapshot?.managedCleanupAvailable == true
-            ? "自動整理: 管理付き接続の終了時のみ"
-            : "自動整理: 未対応（要求追跡の対応を未確認）")
-        add("未管理プロセスは保護")
-        add("管理付き接続 0件・待機（アプリへの接続登録なし）")
-        add("RSSは共有メモリを含む算術和")
+        let summary = NSMenuItem()
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 48))
+        menuStatus.frame = NSRect(x: 14, y: 5, width: 272, height: 38)
+        view.addSubview(menuStatus)
+        summary.view = view
+        menu.addItem(summary)
+        updateMenuStatus()
         menu.addItem(.separator())
         let showDetails = NSMenuItem(title: "全件を表で表示", action: #selector(openDetails), keyEquivalent: "")
         showDetails.target = self; menu.addItem(showDetails)
-        let refresh = NSMenuItem(title: collecting ? "更新中" : "今すぐ更新", action: #selector(refresh), keyEquivalent: "r")
+        let refresh = NSMenuItem(title: collecting ? "一覧を取得中" : "プロセス一覧を更新", action: #selector(refresh), keyEquivalent: "r")
         refresh.target = self; refresh.isEnabled = !collecting && !sleeping; menu.addItem(refresh)
         let quit = NSMenuItem(title: "終了", action: #selector(quit), keyEquivalent: "q")
         quit.target = self; menu.addItem(quit)
     }
     @objc func openDetails() {
-        if details == nil { details = DetailsWindow(refresh: { [weak self] in self?.refresh() }) }
+        if details == nil {
+            let window = DetailsWindow(liveStatus: detailLiveStatus, refresh: { [weak self] in self?.refresh() })
+            details = window
+            for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window.window, queue: .main) { [weak self] _ in
+                    DispatchQueue.main.async { [weak self] in self?.updateLiveTimer() }
+                })
+            }
+        }
         details?.update(snapshot: snapshot, collecting: collecting, sleeping: sleeping, showCPUUnmeasured: showCPUUnmeasured)
         details?.window.makeKeyAndOrderFront(nil)
+        updateLiveTimer()
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
     @objc func quit() { finish() }
     func finish() {
         guard !stopping else { return }
-        stopping = true; timer?.invalidate()
+        stopping = true; timer?.invalidate(); updateLiveTimer()
         if collecting {
             collector.terminateOwnedCollector()
             DispatchQueue.main.asyncAfter(deadline: .now() + 13) { [weak self] in self?.outputSmokeAndExit() }
@@ -729,6 +797,11 @@ final class Monitor: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 "collector_total_wall_seconds": totalCollectorWall, "collector_max_wall_seconds": maximumCollectorWall,
                 "automatic_cleanup_supported": snapshot?.managedCleanupAvailable ?? false,
                 "managed_connections_registered": 0,
+                "live_samples": liveSamples,
+                "live_valid_samples": validLiveSamples,
+                "menu_live_samples": menuSamples,
+                "menu_sample_gaps_seconds": menuGaps,
+                "menu_closed": menuClosed,
                 "details_visible": details?.window.isVisible ?? false,
                 "details_rebuild_count": details?.rebuildCount ?? 0,
                 "details_total_rows": details?.rows.count ?? 0,

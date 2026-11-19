@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """架空fixtureで表示入力の安全境界と有限collectorを検査する。"""
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import time
 
 root = Path(__file__).resolve().parent
-app = root / 'build/RuntimeProcessMenuBar.app/Contents/MacOS/RuntimeProcessMenuBar'
+build = Path(os.environ.get('RPG_MENUBAR_BUILD_DIR', root / 'build'))
+app = build / 'RuntimeProcessMenuBar.app/Contents/MacOS/RuntimeProcessMenuBar'
 valid = json.loads((root / 'Fixtures/valid.json').read_text())
 fixture_checks = []
-with tempfile.TemporaryDirectory(prefix='verification-', dir=root / 'build') as temporary:
+with tempfile.TemporaryDirectory(prefix='verification-', dir=build) as temporary:
     target = Path(temporary)
 
     def fixture(value, expected):
@@ -107,6 +109,7 @@ with tempfile.TemporaryDirectory(prefix='verification-', dir=root / 'build') as 
     assert system_run.returncode == 0, system_run.stderr
     assert invocation.read_text().splitlines()[:4] == ['resident', 'observe', '--scope', 'system']
     assert json.loads(system_run.stdout)['maximum_parallel_collectors'] == 1
+    assert json.loads(system_run.stdout)['live_samples'] == 0
     # 実アプリをfixture collectorで起動し、実際のNSTableView経路を使う。
     ui_fixture = json.loads(json.dumps(system))
     row = ui_fixture['inventory']['processes'][0]
@@ -123,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix='verification-', dir=root / 'build') as 
     ui_path.write_text(json.dumps(ui_fixture))
     collector.write_text('#!/bin/sh\ncat "' + str(ui_path) + '"\n')
     ui_args = [str(app), '--cli', str(collector), '--state', str(target / 'ui/latest.json'),
-               '--scope', 'system', '--show-window', '--smoke-seconds', '2',
+               '--scope', 'system', '--show-window', '--smoke-seconds', '3',
                '--smoke-search', 'synthetic-match', '--smoke-sort-pid', '--smoke-repeat-status']
     conflict = subprocess.run(ui_args + ['--no-ui'], capture_output=True, text=True, timeout=18)
     assert conflict.returncode == 40
@@ -131,6 +134,8 @@ with tempfile.TemporaryDirectory(prefix='verification-', dir=root / 'build') as 
     assert ui_run.returncode == 0, ui_run.stderr
     ui_receipt = json.loads(ui_run.stdout)
     assert ui_receipt['details_visible'] is True
+    assert ui_receipt['live_samples'] >= 2
+    assert ui_receipt['collector_runs'] == 1
     assert ui_receipt['details_rebuild_count'] == 1
     assert ui_receipt['details_total_rows'] == 3
     assert ui_receipt['details_displayed_rows'] == 2
