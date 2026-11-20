@@ -91,6 +91,7 @@ def collect_processes() -> tuple[list[dict], int]:
     """One cheap enumeration: never inspect arguments, environment or open files."""
     result = []
     inaccessible = 0
+    names: dict[str, str] = {}
     attrs = ["pid", "ppid", "name", "create_time", "memory_info", "cpu_times"]
     for process in psutil.process_iter(attrs):
         try:
@@ -101,9 +102,11 @@ def collect_processes() -> tuple[list[dict], int]:
                     or p["memory_info"] is None or p["cpu_times"] is None):
                 inaccessible += 1
                 continue
+            if p["name"] not in names:
+                names[p["name"]] = _safe_text(p["name"])
             result.append({
                 "pid": p["pid"], "ppid": p["ppid"],
-                "name": _safe_text(p["name"]), "created_at": p["create_time"],
+                "name": names[p["name"]], "created_at": p["create_time"],
                 "rss_bytes": p["memory_info"].rss,
                 "cpu_seconds": p["cpu_times"].user + p["cpu_times"].system,
             })

@@ -63,7 +63,8 @@ def host_session() -> str | None:
 
 
 def _forest(processes: list[dict]) -> tuple[list[dict], list[int]]:
-    by_pid = {p["pid"]: {**p, "name": inventory._safe_text(p["name"])} for p in processes}
+    names = {name: inventory._safe_text(name) for name in {p["name"] for p in processes}}
+    by_pid = {p["pid"]: {**p, "name": names[p["name"]]} for p in processes}
     parents = {pid: p["ppid"] if p["ppid"] in by_pid
                and by_pid[p["ppid"]]["created_at"] <= p["created_at"]
                and p["ppid"] != pid else None for pid, p in by_pid.items()}
